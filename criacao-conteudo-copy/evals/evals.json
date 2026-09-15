@@ -1,0 +1,49 @@
+{
+  "skill_name": "criacao-conteudo-copy",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Usa esse relatório de pesquisa (fixtures/pesquisa-petshop.md) e me cria 3 posts para Instagram e 1 para LinkedIn anunciando o novo serviço de busca e leva do meu petshop. Quero um tom leve e simpático, não muito formal.",
+      "expected_output": "3 legendas de Instagram + 1 post de LinkedIn, cada um com hook forte, usando achados do relatório (comunicação durante o serviço, busca e leva como diferencial premium), tom leve/simpático conforme pedido, CTA claro, sem inventar dados que não estão no relatório (ex. não inventar preço específico ou número de clientes).",
+      "files": ["fixtures/pesquisa-petshop.md"],
+      "assertions": [
+        "Entrega 3 legendas de Instagram distintas e 1 post de LinkedIn distinto (4 peças no total, não menos)",
+        "Menciona explicitamente o serviço de busca e leva do pet",
+        "Usa pelo menos um achado do relatório (comunicação durante o serviço via fotos/vídeos, ou busca-e-leva como diferencial premium) como argumento de venda",
+        "Tom é leve/simpático/informal, sem jargão corporativo formal",
+        "Cada peça tem um CTA claro (ação que o leitor deve tomar)",
+        "Oferece pelo menos 2 alternativas de hook/headline para alguma das peças, com ângulos diferentes entre si",
+        "Não inventa dados que não estão no relatório (ex.: preço específico do serviço, número de clientes atendidos, avaliação/nota do petshop)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Preciso de uma sequência de 4 e-mails para reconquistar leads que baixaram nosso e-book mas nunca assinaram o SaaS de fluxo de caixa. Usa o material em fixtures/pesquisa-saas-financeiro.md. Tom profissional mas acessível, não queremos parecer um banco chato.",
+      "expected_output": "Sequência de 4 e-mails, cada um com objetivo distinto dentro da sequência (não repetir o mesmo argumento), assunto + corpo para cada, lidando com a objeção real identificada na pesquisa (medo de configurar errado), usando o diferencial de preço por empresa e o NPS 62 como prova, e sem inventar um case de cliente que não existe (a pesquisa avisa que não há case público ainda).",
+      "files": ["fixtures/pesquisa-saas-financeiro.md"],
+      "assertions": [
+        "Entrega exatamente uma sequência de 4 e-mails, cada um com assunto próprio e corpo próprio",
+        "Cada e-mail da sequência tem um objetivo/argumento central diferente dos outros (não repete a mesma mensagem reformulada)",
+        "Aborda a objeção real identificada na pesquisa: medo de configurar errado e os números saírem errados sem perceber",
+        "Usa o diferencial de precificação por empresa (sem limite de usuários) em algum ponto da sequência",
+        "Usa o NPS 62 / prova social existente como argumento, sem inventar um case específico de cliente com nome ou história",
+        "Tom é profissional mas acessível, evitando linguagem formal/burocrática de banco",
+        "Cada e-mail tem um único CTA claro (não múltiplos CTAs concorrentes no mesmo e-mail)"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Cria a copy da home e da página 'Sobre' do site do meu escritório de advocacia trabalhista. Base: fixtures/pesquisa-escritorio-advocacia.md. Quero tom institucional e confiável, sem parecer agressivo tipo anúncio de internet.",
+      "expected_output": "Copy de home (hero, prova social, problema, solução, objeções, CTA) e de Sobre, tom institucional/formal (não vendedor agressivo), usando o achado de que visitantes buscam saber 'se têm caso' (ex. FAQ ou seção de situações específicas), usando os 12 anos de atuação e as áreas de rescisão indevida/horas extras como prova real, sem inventar número de 'casos ganhos' que a pesquisa explicitamente avisou não existir.",
+      "files": ["fixtures/pesquisa-escritorio-advocacia.md"],
+      "assertions": [
+        "Entrega copy completa tanto da página Home quanto da página Sobre (duas peças distintas)",
+        "A Home segue uma estrutura reconhecível de página institucional (headline/hero, prova social ou credibilidade, problema/solução, objeções, CTA) e não é um bloco de texto único",
+        "Aborda o achado central da pesquisa: o visitante quer saber se tem chance/direito no próprio caso (ex. via FAQ de situações específicas ou linguagem direcionada a isso)",
+        "Usa os 12 anos de atuação e as áreas de rescisão indevida / horas extras não pagas como prova concreta",
+        "Não inventa número de 'casos ganhos' ou estatística de sucesso que a pesquisa avisou não existir",
+        "Tom é institucional e confiável, sem linguagem agressiva de anúncio"
+      ]
+    }
+  ]
+}
