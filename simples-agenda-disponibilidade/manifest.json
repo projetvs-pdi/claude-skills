@@ -1,0 +1,134 @@
+{
+  "name": "simples-agenda-disponibilidade",
+  "version": "1.0.0",
+  "description": "Baixa a agenda FUTURA do Simples Agenda, cruza com a disponibilidade semanal dos profissionais (sb5990) e com o historico de atendimentos das ultimas N semanas (sbx990) para sugerir pacientes recorrentes que preencham horarios vagos, e gera uma planilha final ordenada por profissional + data + hora (Cenario A primeiro, Cenario B depois).",
+  "author": "Claude Code",
+  "created": "2026-09-08",
+  "status": "production",
+
+  "note": "Skill ESPECIFICA (nao generica): hardcoded para as tabelas sb5990/sc0990/sbx990 do banco 4clinics e para o layout de colunas exportado pelo Simples Agenda. NAO reusa baixar_agenda.ps1 nem db_manager.ps1 diretamente (evita efeitos colaterais incompativeis: aquele rejeita datas futuras e sincroniza tudo em sbx990 automaticamente) - reimplementa o MESMO protocolo HTTP documentado em simples-agenda-download/SKILL.md com guardrails de data invertidos (futuro obrigatorio) e reutiliza credential-manager com os MESMOS service_name ja usados por essas skills (simples-agenda, mysql-agenda-db), para nao pedir senha de novo ao usuario.",
+
+  "entry_points": {
+    "powershell": "scripts/gerar_disponibilidade.ps1"
+  },
+
+  "requirements": {
+    "powershell": ">=5.1",
+    "external_tools": [
+      { "name": "mysqlsh.exe (MySQL Shell)", "purpose": "Ler sb5990/sc0990/sbx990 e opcionalmente gravar em sc0990, via --sql --json=raw", "must_be_in_path": true },
+      { "name": "Microsoft Excel (COM)", "purpose": "Ler o .xls da agenda futura exportado pelo Simples Agenda e escrever a planilha .xlsx final de sugestoes", "detect_with": "New-Object -ComObject Excel.Application" }
+    ]
+  },
+
+  "dependencies": {
+    "skills": [
+      { "name": "credential-manager", "path": "../credential-manager", "purpose": "Carrega a senha do Simples Agenda (service=simples-agenda) e do MySQL (service=mysql-agenda-db) - as MESMAS credenciais ja salvas por simples-agenda-download e import-db-agenda, sem pedir de novo." }
+    ],
+    "not_called_directly": [
+      { "name": "simples-agenda-download (baixar_agenda.ps1)", "reason": "Rejeita datas futuras por design (guardrail: nunca pedir agenda que ainda nao aconteceu) e sincroniza automaticamente em sbx990 + envia email - efeitos colaterais errados para agenda futura. Esta skill reimplementa so o login+export+download (mesmo protocolo, documentado) com guardrail de data invertido." },
+      { "name": "import-db-agenda (db_manager.ps1)", "reason": "So conhece sbx990 (historico). sb5990/sc0990 tem schema e semantica diferentes (template semanal recorrente / FKs para pacienteId,profId,especId,tipoConsultaId,planoSaudeId). Consultado apenas como referencia de estilo de codigo (Invoke-MySql, Excel COM, dedup)." }
+    ]
+  },
+
+  "parameters": {
+    "required": ["Email", "DataIni", "DataFim"],
+    "optional": [
+      "CodUsuarioArray (filtra quais profissionais baixar do Simples Agenda; default vazio = todos)",
+      "SemanasHistorico (default 4) - janela do Cenario A em sbx990",
+      "DuracaoPadraoMin (default 50) - duracao assumida de cada atendimento ao calcular ocupacao",
+      "SyncToSc0 (switch, default OFF) - grava as linhas resolvidas em sc0990. OFF por padrao: ver 'sc0_write_policy'.",
+      "PacienteIdPadrao / EspecIdPadraoFallback / TipoConsultaIdPadrao / PlanoSaudeIdPadrao - usados apenas se -SyncToSc0",
+      "EmpresaId (001) / FilialId (01) / FilialOrigemId (01) - mesmo padrao fixo das outras skills",
+      "OutputPath (default Downloads, nome com timestamp)"
+    ]
+  },
+
+  "sc0_write_policy": {
+    "default": "NAO grava em sc0990 (tabela real do sistema 4clinics, em producao). O cruzamento SB5 x SBX x agenda futura roda inteiramente em memoria a partir do .xls baixado + leituras (SELECT) em sb5990/sbx990.",
+    "why": "sa1990 (pacientes) esta VAZIA no banco de referencia e sa3990/sa5990 (tipoConsulta/planoSaude) tambem - nao ha como resolver pacienteId/tipoConsultaId/planoSaudeId por de/para real hoje. Escrever em sc0990 exigiria usar um pacienteId FIXO/sentinela para agendamentos de pessoas diferentes, o que e enganoso numa tabela de producao. profId e especId JA sao resolviveis (sa2990.profSimplesAgId, sa4990.descricao tem dados reais) e sao usados no cruzamento normalmente.",
+    "opt_in": "-SyncToSc0 liga a gravacao, usando -PacienteIdPadrao/-TipoConsultaIdPadrao/-PlanoSaudeIdPadrao como valores fixos (documentados como placeholder na observacao da linha) e profId/especId resolvidos por de/para. Peca confirmacao explicita ao usuario antes de usar -SyncToSc0 pela primeira vez.",
+    "dedup_strategy": "sc0990.unique_SC0_filial_consulta depende de consultaId, que fica NULL aqui (MySQL nao deduplica NULL por UNIQUE KEY). O script faz o dedup em memoria: le sc0990 existente no periodo/profId antes de decidir INSERT vs UPDATE, comparando (profId, inicioAt, observacao contem o nome do cliente)."
+  },
+
+  "schema_reference": {
+    "sb5990": {
+      "meaning": "Template semanal de disponibilidade por profissional (nao por data especifica).",
+      "columns_used": ["empresaId", "filialId", "profId", "diaSemana (1=Seg..7=Dom)", "hora", "status (Disponivel/Bloqueado/Pausa/Indisponivel)"]
+    },
+    "sc0990": {
+      "meaning": "Agenda futura nativa do 4clinics (FKs logicas, nao aplicadas por constraint, para pacienteId/profId/especId/tipoConsultaId/planoSaudeId).",
+      "columns_used_on_write": ["empresaId", "filialId", "filialOrigemId", "id (MAX+1 escopado)", "pacienteId", "profId", "especId", "tipoConsultaId", "planoSaudeId", "inicioAt", "fimAt", "status", "observacao"],
+      "status_enum": ["Agendado", "Confirmado", "EmAtendimento", "Atendido", "Faltou", "Cancelado"]
+    },
+    "sbx990": {
+      "meaning": "Historico de agendamentos ja sincronizados (texto livre: cliente, profissional, servico) - mesma tabela que import-db-agenda ja popula a partir do .xls do Simples Agenda.",
+      "used_for": "Cenario A: SELECT cliente, telefone, email, MAX(dataAgenda) FROM sbx990 WHERE profissional=<nome> AND status='Atendido' AND dataAgenda >= hoje - SemanasHistorico semanas GROUP BY cliente"
+    },
+    "sa2990": { "meaning": "Cadastro de profissionais do 4clinics", "de_para": "profSimplesAgId (ou nome) <-> nome do Profissional na planilha do Simples Agenda" },
+    "sa4990": { "meaning": "Cadastro de especialidades", "de_para": "descricao <-> coluna Servico da planilha do Simples Agenda (match aproximado; fallback -EspecIdPadraoFallback)" }
+  },
+
+  "exit_codes": {
+    "0": "OK",
+    "1": "AUTH_FAILED (login no Simples Agenda)",
+    "2": "NO_AVAILABILITY (sb5990 vazio para todos os profissionais mapeados - nada a cruzar)",
+    "3": "CORRUPTED_FILE (.xls da agenda futura)",
+    "4": "INVALID_INPUT (datas invalidas ou fora de faixa)",
+    "5": "CONNECTION_ERROR (Simples Agenda)",
+    "6": "RATE_LIMITED (HTTP 429)",
+    "7": "DB_ERROR (conexao ou query MySQL)",
+    "8": "EXCEL_COM_UNAVAILABLE",
+    "9": "MYSQLSH_NOT_FOUND"
+  },
+
+  "testing": {
+    "verified_live": [
+      "08/09/2026: schemas de sb5990/sc0990/sbx990 confirmados via SHOW CREATE TABLE no banco real (4clinics, localhost:3306).",
+      "08/09/2026: sa1990 (pacientes) confirmada VAZIA, sa3990/sa5990 (tipoConsulta/planoSaude) confirmadas VAZIAS - motivou a politica sc0_write_policy (default sem gravar em sc0990).",
+      "08/09/2026: sa2990 (profissionais) e sa4990 (especialidades) confirmadas COM dados reais, incluindo a coluna profSimplesAgId ja alinhada aos nomes usados no Simples Agenda.",
+      "08/09/2026: BUG ENCONTRADO E CORRIGIDO antes de entregar - sb5990.filialId vem vazio ('') nos dados reais (sc0990/sbx990 usam '01'). A query de disponibilidade filtra sb5990 so por empresaId (nao por FilialId), senao retornaria 0 linhas sempre. Testado contra profId=1 (ENA): 48 linhas em sb5990, 43 'Disponivel' + 5 'Pausa'.",
+      "08/09/2026: AMBIGUIDADE DE DADOS (nao e bug do script, e do cadastro): sa2990.profSimplesAgId = 'FISIOTERAPIA' aparece em DOIS profissionais (id=2 SIDIELY, id=3 SOLANGE). Uma linha do Simples Agenda com Profissional='FISIOTERAPIA' resolve para o que aparecer primeiro na consulta (sem ORDER BY = arbitrario) - avise o usuario se isso aparecer nos resultados; o cadastro em sa2990 e quem precisa ser corrigido (profSimplesAgId unico por profissional), nao a skill.",
+      "08/09/2026: consultas de sbx990 (GROUP BY cliente/telefone/email com MAX(dataAgenda)) testadas contra dados reais do profissional ENA - 10+ pacientes distintos retornados corretamente, ordenados por atendimento mais recente.",
+      "08/09/2026: BUG CRITICO ENCONTRADO E CORRIGIDO antes de entregar - PowerShell 5.1 le o .ps1 (UTF-8 sem BOM) como ANSI/cp1252, corrompendo o literal 'Disponível' para 'Dispon??vel'. A comparacao SQL nunca batia com nenhuma linha: a query de sb5990 retornava 0 disponibilidade SEMPRE, sem erro nenhum (falha silenciosa). Corrigido montando o literal via [char]0x00ED (mesmo padrao ja usado em outras skills deste projeto, ver memoria 'Encoding UTF-8 em PowerShell -> MySQL'). Sem esse teste real, a skill entregue nunca teria encontrado um unico horario vago.",
+      "08/09/2026: BUG CRITICO ENCONTRADO E CORRIGIDO antes de entregar - todo o script usava '$pid' como nome de variavel para profId, mas $PID e uma variavel automatica SOMENTE LEITURA do PowerShell (Process ID). Qualquer atribuicao a ela (inclusive 'foreach ($pid in ...)') falhava com 'Cannot overwrite variable PID'. Renomeado para $profIdCur em todo o script.",
+      "08/09/2026: TESTE END-TO-END DO CRUZAMENTO (sem o login real no Simples Agenda) rodado contra o banco real, periodo de 7 dias a partir de hoje, profissionais ENA/SIDIELY/SOLANGE: 82 horarios vagos calculados a partir de sb5990, 32 viraram Cenario A (candidatos reais de sbx990 para ENA) e 50 Cenario B. Confirma que o pipeline MySQL -> calculo de buracos -> Cenario A/B -> Excel COM funciona de ponta a ponta com dados reais.",
+      "08/09/2026: IMPACTO REAL CONFIRMADO da ambiguidade 'FISIOTERAPIA' (ver acima): SIDIELY e SOLANGE nunca recebem sugestao de Cenario A porque o historico delas em sbx990 esta gravado sob o nome generico 'FISIOTERAPIA', nao pelo nome individual - a busca por profissional='SIDIELY' ou 'SOLANGE' em sbx990 sempre retorna 0 candidatos. So sera resolvido corrigindo o cadastro/exportacao na origem (Simples Agenda ou sa2990), nao pela skill.",
+      "08/09/2026: EXECUCAO END-TO-END REAL contra o Simples Agenda (credenciais de waleriaduarte@gmail.com, service=simples-agenda) para o periodo 09/09/2026-15/09/2026: login OK, 207 agendamentos futuros baixados, 43 horarios vagos calculados em sb5990, 6 sugestoes de Cenario A, 37 de Cenario B. Planilha final gerada com sucesso em Downloads.",
+      "08/09/2026: MELHORIA DE QUALIDADE apos revisao do usuario na planilha real - a 1a versao sugeriu uma paciente com historico 100% de agendamentos a TARDE para um horario vago de MANHA (so olhava 'mais recente atendido', ignorava o turno). Corrigido: a query de sbx990 agora traz todo o historico (nao so MAX(dataAgenda)) para calcular o turno habitual de cada paciente (Manha 08:00-11:59 / Tarde 12:00-18:59); o casamento buraco<->paciente tenta turno compativel primeiro, e so usa turno diferente como ultimo recurso, sinalizando 'ATENCAO' na Observacao e destacando a linha em amarelo na planilha. Reexecutado contra os mesmos dados reais (mesmo periodo): ainda 6 sugestoes de Cenario A, das quais 2 ficaram marcadas com divergencia de turno (antes, essa divergencia era invisivel para o usuario).",
+      "08/09/2026: MELHORIA DE ESTRUTURA a pedido do usuario, apos revisao das planilhas reais: (1) confirmado que a prioridade de sugestao ja era 'mais recente para mais distante dentro da janela de N semanas' (Sort-Object UltimoAtendimento -Descending), sem mudanca necessaria; (2) Cenario A e B deixaram de ser dois blocos separados na planilha - agora sao UMA lista so, ordenada por profissional+data+hora+cenario (A/B intercalados cronologicamente dentro de cada profissional), com linha em branco a cada troca de profissional; (3) nova 2a aba 'SEM AGENDAMENTO' lista pacientes recorrentes (candidatos do historico que sobraram sem uso) para contato ativo. Reexecutado contra os mesmos dados reais (waleriaduarte@gmail.com, 09-15/09/2026): mesmos 6 Cenario A / 37 Cenario B / 2 divergencias de turno de antes, mas agora intercalados corretamente e com a aba de resumo (vazia neste caso especifico - os 6 candidatos disponiveis foram todos consumidos pelos 43 buracos, oferta < demanda).",
+      "08/09/2026: BUG DE PRECISAO ENCONTRADO PELO USUARIO na planilha real - LUCIANA tinha 2 buracos de tarde (14:00 e 15:00) preenchidos com Pedro (habito real: 15:00) no de 14:00 e Jessica (habito real: 14:00) no de 15:00 - trocados entre si, porque o casamento so olhava o turno amplo (Manha/Tarde), nao o horario especifico. Corrigido: cada candidato agora tem HoraHabitual (moda do horario entre as visitas, desempate pelo mais recente), e o casamento buraco<->candidato ordena por proximidade em minutos (Get-DiferencaMinutos) antes da recencia. Reexecutado contra os mesmos dados reais: Jessica (habito 14:00) foi para o buraco de 14:00, Pedro (habito 15:00) para o de 15:00 - confirmado lendo a planilha gerada via Excel COM. Observacao agora informa a distancia exata em minutos quando nao ha match perfeito de horario.",
+      "08/09/2026: NOVA FUNCIONALIDADE a pedido do usuario - envio automatico por email da planilha gerada. Reusa a skill email-sender existente, com o service='simples-agenda' JA CONFIGURADO (mesmo remetente projetvs.pdi@gmail.com, mesma allowlist ja contendo amazonasterapiafisio@gmail.com e projetvs.pdi@gmail.com) - nao precisou de setup novo nem allowlist nova. Comportamento: (1) apos gerar a planilha, envia para -EnviarPara (default amazonasterapiafisio@gmail.com) com resumo no corpo; (2) sucesso no envio -> apaga a planilha local (Remove-Item); (3) falha no envio -> planilha NAO e apagada, e um 2o email e disparado para -EmailErroPara (default projetvs.pdi@gmail.com) com o motivo mapeado a partir do exit code do email-sender (allowlist, credencial, TLS, SMTP etc.); (4) -SemEnvioEmail desliga o recurso inteiro, mantendo o comportamento anterior (so gera a planilha local). Validado: sintaxe PowerShell OK (PSParser.Tokenize sem erros); envio real END-TO-END ainda NAO EXERCITADO (pendente).",
+      "PENDENTE: -SyncToSc0 ainda nao foi exercitado contra o banco real (sc0990 estava vazia no momento dos testes).",
+      "08/09/2026: ENVIO DE EMAIL TESTADO END-TO-END COM SUCESSO REAL - executado contra Simples Agenda (waleriaduarte@gmail.com, 09-15/09/2026): planilha gerada, enviada para amazonasterapiafisio@gmail.com (confirmado no log de auditoria do email-sender, service=simples-agenda), planilha local apagada apos confirmacao do envio. Caminho de erro (email para projetvs.pdi@gmail.com quando o envio principal falha) ainda NAO EXERCITADO com falha real - so a logica foi revisada.",
+      "08/09/2026: BUG CRITICO DE ENCODING encontrado pelo usuario - nomes com acento apareciam corrompidos ('TOMÁS' virava 'TOM├üS') AO ABRIR A PLANILHA NO GOOGLE SHEETS (Excel local mostrava certo, mascarando o problema). Investigacao: a corrupcao esta GRAVADA DENTRO do proprio .xlsx (em xl/sharedStrings.xml), nao e so exibicao - confirmado extraindo o .xlsx como zip e inspecionando o XML cru. Causa raiz isolada por teste: o Excel COM, ao fazer SaveAs para .xlsx, reconverte o texto usando o codepage OEM do sistema (850, Windows pt-BR) em vez de manter UTF-8/UTF-16 - e isso e HIGHLY REPRODUTIVEL quando o Excel COM ja foi usado antes no mesmo processo (aqui, a leitura do .xls na secao 2, antes da escrita final na secao 10). Tentativa 1 (setar Console.OutputEncoding=UTF8 antes de criar o objeto COM) funcionou em teste isolado de UMA instancia do Excel, mas falhou de forma inconsistente/diferente quando e a 2a instancia no mesmo processo (cenario real do script) - abandonada por nao confiavel. Fix adotado (tentativa 2, VALIDADA): deixar a corrupcao acontecer e REVERTE-LA depois do SaveAs, direto no XML interno (xl/sharedStrings.xml) - abre o .xlsx como ZipArchive (System.IO.Compression), reverte a transformacao bytes-UTF8-relidos-como-CP850 (deterministica e reversivel: decodifica como CP850, re-encoda como UTF-8), com o codepage OEM detectado dinamicamente via CultureInfo (nao fixo em 850, para nao quebrar em outra maquina/locale). Testado e confirmado: (1) sintaxe PowerShell OK; (2) planilha regerada com os MESMOS dados reais - xl/sharedStrings.xml extraido mostra 'TOMÁS GUIMARÃES RAMOS', 'Letícia Aroucha', 'João Gabriel...', 'Jéssica...', 'MAGALHÃES' todos CORRETOS; (3) arquivo continua integro - reaberto via Excel COM sem erro, ambas as abas (DISPONIBILIDADE e SEM AGENDAMENTO) presentes; (4) teste end-to-end completo com envio real por email confirmou que o anexo enviado ja e o arquivo corrigido (a correcao roda ANTES do envio de email na ordem do script).",
+      "PENDENTE: caminho de erro do envio de email (email para projetvs.pdi@gmail.com quando o envio principal falha) ainda nao foi exercitado com uma falha REAL (ex: -EnviarPara fora da allowlist de proposito) - so a logica foi revisada por leitura de codigo.",
+      "08/09/2026: CAUSA RAIZ REAL do bug de encoding encontrada - e ela era MUITO maior que o sintoma. O usuario reportou que a paciente Juliana Quintelo Galvao, JA AGENDADA com a Jasmara em 09/09 08:00, foi sugerida para um buraco da MESMA Jasmara em 09/09 13:00, mesmo existindo codigo de exclusao de 'ja agendados'. Diagnostico instrumentado (scratchpad/diag2.ps1, replicando a logica real do script contra dados reais) mostrou: a chave do candidato vinda do MySQL era 'JULIANA QUINTELO GALV├UO' (corrompida) enquanto a chave vinda da agenda futura, lida via Excel COM, era 'JULIANA QUINTELO GALVAO' (correta) - as duas nao batiam, e a exclusao falhava EXATAMENTE e SOMENTE para pacientes com acento no nome (os outros 14 candidatos da Jasmara eram excluidos corretamente, o que mascarava o bug e o fazia parecer aleatorio). Investigado ate a origem: '& mysqlsh.exe ... 2>&1' faz o PowerShell decodificar a saida do processo filho com [Console]::OutputEncoding, que neste ambiente e CP850 (ibm850) - confirmado por teste (scratchpad/diag3.ps1). Ou seja, TODO texto acentuado do banco entrava corrompido em memoria, antes de qualquer planilha. Fix: ler o stdout do mysqlsh com UTF-8 EXPLICITO via System.Diagnostics.Process + StandardOutputEncoding; comparadas 3 abordagens (scratchpad/diag4.ps1) e verificado que essa funciona identicamente em 'powershell -File' e 'powershell -Command', ao contrario de mexer em [Console]::OutputEncoding (cujo resultado muda conforme o contexto de invocacao).",
+      "08/09/2026: CORRECAO DE UM DIAGNOSTICO ERRADO MEU (registrado de proposito): a correcao de encoding anterior (reverter CP850->UTF8 no xl/sharedStrings.xml depois do SaveAs) partia da premissa ERRADA de que o Excel COM corrompia ao gravar. Ela 'funcionava' na planilha porque revertia exatamente a mesma transformacao, mas era remendo no sintoma - os dados seguiam corrompidos durante todo o processamento, e por isso o bug de duplicacao da Juliana continuava de pe. Depois de corrigir a ORIGEM (leitura do mysqlsh), esse pos-processamento passou a CORROMPER o arquivo (verificado: 'Jéssica' virou 'J?ssica' no XML) e foi REMOVIDO do script. Conclusao: o Excel COM sempre gravou UTF-8 corretamente; a corrupcao era 100% da leitura do MySQL. Licao de metodo: o teste isolado que 'provou' a culpa do Excel COM passava a string por parametro de linha de comando do PowerShell, que tambem corrompia - o teste tinha a mesma contaminacao que o bug investigado.",
+      "08/09/2026: REGRA DE NEGOCIO AMPLIADA a pedido do usuario - a exclusao de candidatos deixou de ser por profissional e passou a ser GLOBAL no periodo: se o paciente tem qualquer agendamento futuro no intervalo consultado (com qualquer profissional), ele nao e sugerido. Antes, um paciente agendado com a ENA ainda podia ser sugerido para a LUCIANA. Alinha com o proposito da skill (achar quem NAO tem agenda futura) e com a aba SEM AGENDAMENTO. Decisao complementar tomada junto (nao pedida explicitamente, mas necessaria para a regra fazer sentido): agendamento com status 'Cancelado' NAO conta como alocacao - quem teve a sessao cancelada e justamente quem vale a pena reencaixar; mesmo criterio ja usado no calculo de horarios ocupados. Efeito medido nos dados reais (08-15/09/2026): 99 pacientes passaram a ser excluidos por ja terem agenda futura, e as sugestoes de Cenario A cairam de 14 para 5 - mais restritivo, porem correto. Verificado no arquivo final: acentos corretos no XML cru ('Jéssica Ribeiro Cruz'), Juliana nao aparece mais entre as sugestoes, e o .xlsx continua integro (reaberto via Excel COM, ambas as abas, 46 linhas).",
+      "08/09/2026: FORMATO DE DATA da coluna 'Ultimo Atendimento' corrigido a pedido do usuario para dd/MM/yyyy HH:mm (antes o Excel reinterpretava a string do MySQL como data e exibia no padrao americano, '8/24/26 13:00'). Implementado via funcao Format-DataHoraBr aplicada APENAS na escrita das duas abas (DISPONIBILIDADE col 9 e SEM AGENDAMENTO col 4), com a celula marcada como texto (NumberFormat '@') para o Excel nao reinterpretar. Decisao deliberada: o dado INTERNO continua no formato do MySQL ('yyyy-MM-dd HH:mm:ss') porque e assim que ele ordena corretamente como string (Sort-Object UltimoAtendimento -Descending, usado na priorizacao por recencia) e permite extrair a hora habitual por indice (Substring(11,5)) - converter o dado interno quebraria as duas coisas silenciosamente. A funcao tenta 3 formatos de entrada e, se nenhum casar, devolve o valor original em vez de esconder o dado. Testado contra dados reais: '15/08/2026 16:00', '01/09/2026 15:00'.",
+      "08/09/2026: NOVA COLUNA 'Dia da Semana' a pedido do usuario, na aba DISPONIBILIDADE, entre 'Data' e 'Hora', derivada da propria data (segunda-feira, terca-feira, ..., sabado, domingo). Implementada via cultura pt-BR do .NET (Data.ToString('dddd', CultureInfo.GetCultureInfo('pt-BR'))) em vez de uma tabela de literais no .ps1 - decisao deliberada: 'terça-feira' e 'sábado' tem acento, e literal acentuado neste arquivo seria lido como ANSI/cp1252 pelo PowerShell 5.1 e sairia corrompido (mesma classe de bug ja enfrentada nesta skill). Ajustados junto: indices das colunas seguintes (+1), o range do destaque amarelo de divergencia de turno (A:J -> A:K) e o AutoFit. Testado contra dados reais: coluna na posicao certa, valores corretos (08/09/2026=terca-feira, 12/09/2026=sabado), linhas em branco entre profissionais preservadas, e acentos corretos no XML cru do .xlsx ('terça-feira', 'sábado').",
+      "08/09/2026: AJUSTES FINAIS a pedido do usuario: (1) titulo do email mudado de 'Agenda Ordenada: DATA a DATA' para 'Agenda Futura x Disponibilidade Profissionais: DATA a DATA' - confirmado no log de auditoria do email-sender (enviado realmente com novo titulo); (2) parametros DataIni e DataFim deixaram de ser obrigatorios - agora sao opcionais, e se nao forem informados (ambos), o script usa defaults: hoje ate hoje+7 dias (testado com sucesso, as mensagens de status exibem as datas corretas); se apenas uma das datas for informada, erro com mensagem orientadora. Testado em 3 cenarios: (a) sem datas (default 08/09 a 15/09), (b) ambas datas (14/09 a 20/09), (c) apenas DataIni (erro esperado). Documentacao atualizada em SKILL.md refletindo que as datas agora sao opcionais com default de 7 dias."
+    ]
+  },
+
+  "documentation": { "main": "SKILL.md" },
+
+  "triggering_phrases": [
+    "agenda futura",
+    "analisar agenda futura",
+    "analisar disponibilidade",
+    "analisar disponibilidade de profissionais",
+    "quais horarios estao vagos",
+    "quem encaixar na agenda",
+    "sugerir pacientes para horarios vagos",
+    "sugerir pacientes para preencher",
+    "buracos na agenda",
+    "horarios vagos",
+    "horarios livres na agenda",
+    "disponibilidade x agenda futura",
+    "cruzar agenda futura com disponibilidade",
+    "exportar agendamentos futuros com sugestoes",
+    "encontrar horarios vazios",
+    "quais pacientes sugerir"
+  ]
+}

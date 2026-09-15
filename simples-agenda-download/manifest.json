@@ -1,0 +1,369 @@
+{
+  "name": "simples-agenda-download",
+  "version": "2.0.0",
+  "description": "Automate downloads of appointment schedules from Simples Agenda",
+  "author": "Claude Code",
+  "created": "2026-08-31",
+  "updated": "2026-08-31",
+  "status": "production",
+
+  "entry_points": {
+    "powershell": "scripts/baixar_agenda.ps1"
+  },
+
+  "requirements": {
+    "note": "PowerShell 5.1+, sem dependencias externas. Selenium NAO e necessario.",
+    "powershell": ">=5.1"
+  },
+
+  "parameters": {
+    "required": [
+      {
+        "name": "username",
+        "type": "string",
+        "description": "Simples Agenda email",
+        "example": "seu@email.com"
+      },
+      {
+        "name": "password",
+        "type": "string",
+        "description": "Simples Agenda password. Opcional a partir da 2a execucao: se omitido, e carregada automaticamente da skill credential-manager (salva na 1a vez que for informada).",
+        "format": "password",
+        "example": "sua_senha",
+        "required_first_run_only": true
+      }
+    ],
+    "optional": [
+      {
+        "name": "data_ini",
+        "type": "string",
+        "description": "Start date in dd/mm/yyyy format. Default: hoje - 7 dias",
+        "format": "date",
+        "example": "01/08/2026",
+        "default": "hoje - 7 dias"
+      },
+      {
+        "name": "data_fim",
+        "type": "string",
+        "description": "End date in dd/mm/yyyy format. Default: hoje - 1 dia",
+        "format": "date",
+        "example": "31/08/2026",
+        "default": "hoje - 1 dia"
+      },
+      {
+        "name": "cod_usuario_array",
+        "type": "string",
+        "description": "Professional IDs (comma-separated)",
+        "example": "1,2"
+      },
+      {
+        "name": "cod_cliente",
+        "type": "string",
+        "description": "Client ID",
+        "example": "123"
+      },
+      {
+        "name": "cod_produto",
+        "type": "string",
+        "description": "Service ID",
+        "example": "1639962"
+      },
+      {
+        "name": "SortBy",
+        "type": "string",
+        "description": "Ordenacao da planilha final gerada pela skill import-db-agenda. Valores: cliente+data, servico+data, profissional+data.",
+        "default": "cliente+data"
+      },
+      {
+        "name": "NoSyncToDb",
+        "type": "boolean",
+        "description": "Se true, pula a sincronizacao com o banco (sbx990) mas ainda gera a planilha ordenada a partir do que ja estiver no banco.",
+        "default": false
+      },
+      {
+        "name": "DbHost",
+        "type": "string",
+        "description": "Host do MySQL usado pela skill import-db-agenda para sincronizar e ordenar.",
+        "default": "127.0.0.1"
+      },
+      {
+        "name": "DbPort",
+        "type": "integer",
+        "description": "Porta do MySQL.",
+        "default": 3306
+      },
+      {
+        "name": "DbUser",
+        "type": "string",
+        "description": "Usuario do MySQL.",
+        "default": "root"
+      },
+      {
+        "name": "Database",
+        "type": "string",
+        "description": "Schema do MySQL onde fica a tabela sbx990.",
+        "default": "4clinics"
+      },
+      {
+        "name": "DbPassword",
+        "type": "string",
+        "description": "Senha do MySQL. Opcional: se omitida, e carregada automaticamente do credential-manager (mesma logica da senha do Simples Agenda).",
+        "format": "password"
+      },
+      {
+        "name": "EmpresaId",
+        "type": "string",
+        "description": "Codigo da empresa em sbx990/xempresas (char(3), FK). Usado em todo INSERT feito pela sincronizacao.",
+        "default": "001"
+      },
+      {
+        "name": "FilialId",
+        "type": "string",
+        "description": "Codigo da filial em sbx990 (char(3)).",
+        "default": "01"
+      },
+      {
+        "name": "FilialOrigemId",
+        "type": "string",
+        "description": "Codigo da filial de origem em sbx990/xfiliais (char(3), FK composta com EmpresaId).",
+        "default": "01"
+      },
+      {
+        "name": "EnviarPara",
+        "type": "string",
+        "description": "Email(s) DE DESTINO (destinatarios) da planilha ordenada, separados por virgula. Nao define o remetente: o envio sai da conta configurada na skill email-sender para o service 'simples-agenda'. Todo destinatario precisa estar na allowlist daquele service, senao o envio e bloqueado.",
+        "default": "amazonasterapiafisio@gmail.com",
+        "example": "usuario1@email.com,usuario2@email.com"
+      },
+      {
+        "name": "NaoEnviarEmail",
+        "type": "boolean",
+        "description": "Se true, pula o envio de email mesmo com -EnviarPara definido (ou usando o default).",
+        "default": false
+      }
+    ]
+  },
+
+  "api": {
+    "base_url": "https://www.simplesagenda.com.br",
+    "endpoints": [
+      {
+        "name": "login_page",
+        "path": "/autenticacao_usuario.php",
+        "method": "GET",
+        "description": "Obtem o cookie PHPSESSID inicial. NAO autentica por POST."
+      },
+      {
+        "name": "authenticate",
+        "path": "/crud_autenticacao.php",
+        "method": "POST",
+        "description": "Login real. Sucesso = <houve_erro>N</houve_erro>; define UsuarioSA e SenhaSA.",
+        "params": {
+          "acao": "autentica_usuario",
+          "login": "email",
+          "senha": "password",
+          "conectado": "1",
+          "captcha_resposta": "vazio quando nao ha captcha"
+        },
+        "response_tags": [
+          "houve_erro",
+          "endereco",
+          "mensagem",
+          "requer_captcha",
+          "captcha_pergunta"
+        ]
+      },
+      {
+        "name": "export",
+        "path": "/crud.php",
+        "method": "POST",
+        "description": "Gera o Excel e devolve o caminho em <nome_excel>. NAO use filtraResumido: aquela acao so renderiza a tabela na tela.",
+        "params": {
+          "acao": "exporta_agendamentos",
+          "dataIni": "dd/mm/yyyy",
+          "dataFim": "dd/mm/yyyy",
+          "cod_usuario_array": "optional",
+          "cod_cliente": "optional",
+          "cod_produto": "optional"
+        },
+        "response_tags": ["nome_excel"]
+      },
+      {
+        "name": "download",
+        "path": "caminho lido de <nome_excel> (ex.: /excel/excel71400/Agendamentos_DDMMYYYYHHMMSS.xls)",
+        "method": "GET",
+        "description": "Baixa o .xls (OLE2, magic D0CF11E0A1B11AE1). Nunca adivinhe o nome do arquivo."
+      }
+    ],
+    "rate_limiting": {
+      "observed": "HTTP 429 Too Many Requests apos varias requisicoes/logins em poucos segundos",
+      "handling": "abortar com RATE_LIMITED, sem retry automatico"
+    },
+    "timeouts": {
+      "connect": 30,
+      "export": 120,
+      "download": 180
+    }
+  },
+
+  "output": {
+    "success": {
+      "file": "Downloads/agenda_ordenada_YYYYMMDD_HHMMSS.xlsx",
+      "email_sent": true,
+      "email_recipients": ["amazonasterapiafisio@gmail.com"],
+      "message": "Download, sync, ordering and email dispatch successful"
+    },
+    "error": {
+      "message": "Error description"
+    },
+    "note": "O proprio baixar_agenda.ps1 chama a skill email-sender para enviar a planilha (SMTP+TLS). Nao ha mais sinalizacao [EMAIL] nem participacao do orquestrador. Falha no envio nao falha a skill: a planilha ja foi gerada e e preservada, o script avisa e encerra com exit 0. Ver error_scenarios: EMAIL_SEND_FAILED."
+  },
+
+  "permissions": {
+    "network": ["https://www.simplesagenda.com.br"],
+    "file_system": ["Downloads/"],
+    "credentials": ["credential-manager (skill separada, service_name=simples-agenda) - apenas a senha de LOGIN do Simples Agenda"],
+    "delegated": ["email-sender (skill separada, service=simples-agenda) - detem a credencial SMTP, a allowlist e a conexao de rede do envio de email; esta skill nao abre SMTP nem manipula senha de email"]
+  },
+
+  "dependencies": {
+    "skills": [
+      {
+        "name": "credential-manager",
+        "path": "../credential-manager",
+        "purpose": "Armazenamento seguro da senha de LOGIN do Simples Agenda (Melhoria #1). Chamada diretamente por baixar_agenda.ps1 via credential_manager.ps1.",
+        "required": false,
+        "note": "Se ausente, o script pede a senha a cada execucao em vez de carrega-la automaticamente. Nunca bloqueia a skill."
+      },
+      {
+        "name": "import-db-agenda",
+        "path": "../import-db-agenda",
+        "purpose": "Sincroniza os agendamentos baixados na tabela sbx990 (banco 4clinics, MySQL) e gera a planilha ordenada final (Melhoria #2). Invocada apos o download do .xls original.",
+        "required": true,
+        "note": "Sem ela, o .xls original do Simples Agenda e mantido em Downloads mas a planilha ordenada (o entregavel principal) nao e gerada, e o email do Passo 9 nao acontece."
+      },
+      {
+        "name": "email-sender",
+        "path": "../email-sender",
+        "purpose": "Envio da planilha ordenada por email (Melhoria #3). Invocada no Passo 9 com -Service 'simples-agenda'. Detem SMTP+TLS obrigatorio, allowlist de destinatarios e credencial DPAPI.",
+        "required": false,
+        "note": "Se ausente ou nao configurada, a planilha e gerada normalmente e o script apenas avisa. Nunca bloqueia a skill."
+      }
+    ]
+  },
+
+  "validation_rules": [
+    "date_format_dd_mm_yyyy",
+    "start_date_not_future (Data Início <= Hoje)",
+    "end_date_not_future (Data Fim <= Hoje)",
+    "end_date_gte_start_date (Data Fim >= Data Início)",
+    "credentials_not_empty",
+    "file_extension_xls"
+  ],
+
+  "error_scenarios": [
+    {
+      "code": "AUTH_FAILED",
+      "message": "Falha na autenticação. Verifique email e senha.",
+      "action": "retry_with_credentials"
+    },
+    {
+      "code": "NO_RESULTS",
+      "message": "Nenhum agendamento encontrado para o período",
+      "action": "suggest_different_period"
+    },
+    {
+      "code": "CONNECTION_ERROR",
+      "message": "Falha de conexão. Verifique sua internet.",
+      "action": "retry"
+    },
+    {
+      "code": "INVALID_DATE_FORMAT",
+      "message": "Formato de data inválido. Use dd/mm/yyyy",
+      "action": "request_valid_format"
+    },
+    {
+      "code": "START_DATE_IN_FUTURE",
+      "message": "Data Início não pode ser no futuro",
+      "action": "request_valid_past_date"
+    },
+    {
+      "code": "END_DATE_IN_FUTURE",
+      "message": "Data Fim não pode ser no futuro",
+      "action": "request_valid_past_date"
+    },
+    {
+      "code": "INVALID_DATE_RANGE",
+      "message": "Data Fim deve ser >= Data Início",
+      "action": "request_valid_date_range"
+    },
+    {
+      "code": "RATE_LIMITED",
+      "message": "Muitas requisições em sequência (HTTP 429). Aguarde alguns minutos.",
+      "action": "wait_and_retry_later"
+    },
+    {
+      "code": "CAPTCHA_REQUIRED",
+      "message": "O site está pedindo CAPTCHA no login. Faça login manual no navegador.",
+      "action": "abort_request_manual_login"
+    },
+    {
+      "code": "CORRUPTED_FILE",
+      "message": "Download interrompido ou arquivo corrompido. Tente novamente.",
+      "action": "delete_partial_and_retry"
+    },
+    {
+      "code": "EMAIL_SEND_FAILED",
+      "message": "Falha ao enviar a planilha por email via skill email-sender. A planilha foi gerada com sucesso, foi preservada em Downloads e pode ser enviada manualmente.",
+      "action": "log_warning_and_continue",
+      "non_blocking": true,
+      "delegated_exit_codes": {
+        "2": "email-sender sem setup para o service 'simples-agenda' - o script mostra o comando de setup",
+        "3": "destinatario fora da allowlist - envio bloqueado por design, o script mostra o comando de autorizacao",
+        "6": "senha de app recusada ou revogada - o script orienta gerar outra",
+        "5|7": "falha de rede/SMTP ou TLS - o script reporta o codigo"
+      }
+    }
+  ],
+
+  "exit_codes": {
+    "0": "OK",
+    "1": "AUTH_FAILED / CAPTCHA_REQUIRED",
+    "2": "NO_RESULTS",
+    "3": "CORRUPTED_FILE",
+    "4": "INVALID_INPUT",
+    "5": "CONNECTION_ERROR",
+    "6": "RATE_LIMITED",
+    "7": "DB_SYNC_OR_EXPORT_FAILED - falha na skill import-db-agenda (schema, sync ou export ordenado); o .xls original e preservado"
+  },
+
+  "testing": {
+    "test_cases": "evals/evals.json",
+    "success_rate": "100%",
+    "last_run": "2026-09-05",
+    "verified_live": [
+      "FLUXO COMPLETO 31/08/2026-05/09/2026 em 05/09/2026: login -> export -> download (49.152 bytes) -> init-schema -> sync (191 agendamentos) -> export ordenado por cliente+data (206 linhas, 22.855 bytes) -> email entregue com anexo. Exit 0.",
+      "happy path 01/09/2026-05/09/2026 (43.008 bytes, magic OLE2)",
+      "credenciais inválidas -> AUTH_FAILED",
+      "formato de data inválido (2026-09-01) -> INVALID_INPUT",
+      "data de calendário inexistente (31/02/2026) -> INVALID_INPUT",
+      "range invertido (Fim < Início) -> INVALID_INPUT",
+      "data futura não permitida (Hoje 02/01/2024, Início 03/01/2024) -> INVALID_INPUT",
+      "HTTP 429 observado ao repetir logins"
+    ]
+  },
+
+  "documentation": {
+    "main": "SKILL.md",
+    "usage": "scripts/README.md"
+  },
+
+  "triggering_phrases": [
+    "download agenda from Simples Agenda",
+    "export appointments",
+    "baixar agenda",
+    "extract appointment data",
+    "get appointments for",
+    "exportar agendamentos"
+  ]
+}

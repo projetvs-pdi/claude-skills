@@ -1,0 +1,338 @@
+{
+  "name": "email-sender",
+  "version": "1.0.0",
+  "description": "Envio seguro de email por SMTP+TLS com anexo, reutilizavel por qualquer skill, com allowlist obrigatoria de destinatarios isolada por servico",
+  "author": "Claude Code",
+  "created": "2026-09-05",
+  "updated": "2026-09-05",
+  "status": "production",
+
+  "entry_points": {
+    "powershell": "scripts/send_email.ps1"
+  },
+
+  "requirements": {
+    "note": "PowerShell 5.1+ sem dependencias externas. Windows apenas (DPAPI). Python nao e suportado nesta versao.",
+    "powershell": ">=5.1",
+    "os": "Windows (DPAPI vinculado a usuario+maquina)"
+  },
+
+  "design_principle": {
+    "service_isolation": "O parametro -Service e obrigatorio e define um namespace proprio para credencial, allowlist, config e auditoria. Skills diferentes usam services diferentes e nunca enxergam os dados uma da outra. Autorizar um destinatario em um service nao autoriza em outro.",
+    "generic_by_design": "Esta skill nao contem regra de negocio de nenhuma skill especifica. Quem chama informa destinatarios, assunto, corpo e anexos."
+  },
+
+  "security_controls": [
+    {
+      "control": "allowlist_mandatory_fail_closed",
+      "description": "So recebe email quem foi previamente autorizado naquele service. Allowlist ausente ou vazia bloqueia todo envio. Verificada ANTES de qualquer conexao SMTP e antes de tocar na credencial.",
+      "rationale": "Destinatario digitado errado com anexo de dado pessoal e incidente de vazamento, e email nao tem desfazer."
+    },
+    {
+      "control": "allowlist_total_block",
+      "description": "Se qualquer destinatario da chamada estiver fora da lista, NENHUM email e enviado - nem para os autorizados.",
+      "rationale": "Envio parcial mascararia o erro do chamador e ainda entregaria os dados a um conjunto que ele nao pediu."
+    },
+    {
+      "control": "tls_mandatory",
+      "description": "EnableSsl fixo em true, sem parametro para desativar. Forca TLS 1.2+ (1.3 quando disponivel). Reseta ServerCertificateValidationCallback para null antes de conectar. Falha de TLS aborta sem fallback para texto claro.",
+      "rationale": "PowerShell 5.1 pode herdar SSL3/TLS1.0 do processo; um script anterior na sessao pode ter instalado callback permissivo que aceitaria certificado invalido."
+    },
+    {
+      "control": "no_plaintext_password",
+      "description": "Nao existe parametro -Password. A senha entra somente por Read-Host -AsSecureString no setup, e no envio o blob DPAPI e lido direto para SecureString e entregue a SmtpClient via NetworkCredential. O texto plano nunca e materializado no processo.",
+      "rationale": "Senha em linha de comando fica visivel via Get-CimInstance Win32_Process e no historico do PSReadLine; senha em string .NET nao pode ser zerada e pode ir para dump de memoria ou paginacao."
+    },
+    {
+      "control": "anti_header_injection",
+      "description": "CR/LF rejeitado em destinatarios, remetente e assunto. Destinatarios validados por formato, limite de 254 caracteres, sem tab e sem byte nulo.",
+      "rationale": "Sem isso um chamador poderia injetar Bcc no assunto e desviar copia do anexo, furando a allowlist."
+    },
+    {
+      "control": "plaintext_body_only",
+      "description": "IsBodyHtml fixo em false.",
+      "rationale": "Sem HTML significa sem conteudo remoto, sem pixel de rastreamento e sem superficie de injecao de markup."
+    },
+    {
+      "control": "local_audit_trail",
+      "description": "Cada tentativa (enviada, bloqueada ou falha) grava metadados em audit/<service>.log: timestamp, resultado, remetente, destinatarios, assunto, nomes e tamanhos de anexo. Nunca o corpo, nunca a senha, nunca o conteudo do anexo.",
+      "rationale": "Rastreabilidade de quem recebeu qual dado, sem replicar o dado no log."
+    },
+    {
+      "control": "service_name_validation",
+      "description": "Nome do service validado por ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$.",
+      "rationale": "Impede path traversal via nome de service na composicao dos caminhos de arquivo."
+    },
+    {
+      "control": "dry_run",
+      "description": "-DryRun valida allowlist, credencial, anexos e tamanhos e reporta o que seria enviado, sem abrir conexao."
+    }
+  ],
+
+  "not_protected_against": [
+    "Caminho do anexo nao e restrito: a skill chamadora roda como o mesmo usuario e poderia ler e enviar o arquivo por conta propria. A barreira efetiva contra exfiltracao e a allowlist (o destino), nao o caminho de origem.",
+    "Conta do Windows comprometida: quem tem a sessao do usuario decifra o blob DPAPI - e o modelo do DPAPI por design.",
+    "Anexo nao e criptografado: TLS protege o transito, nao o repouso na caixa do destinatario.",
+    "Allowlist e estatica: revisar periodicamente e responsabilidade de quem opera."
+  ],
+
+  "parameters": {
+    "required": [
+      {
+        "name": "Service",
+        "type": "string",
+        "description": "Namespace do servico chamador. Define credencial, allowlist, config e auditoria proprias. Obrigatorio em TODA invocacao.",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "example": "simples-agenda"
+      }
+    ],
+    "send_action": [
+      {
+        "name": "To",
+        "type": "string[]",
+        "description": "Destinatarios. Array ou string separada por virgula/ponto-e-virgula. TODOS devem estar na allowlist do service, senao o envio inteiro e bloqueado.",
+        "example": "dest1@dominio.com,dest2@dominio.com"
+      },
+      {
+        "name": "Subject",
+        "type": "string",
+        "description": "Assunto. CR/LF rejeitado (anti header injection)."
+      },
+      {
+        "name": "Body",
+        "type": "string",
+        "description": "Corpo em texto puro. HTML nao e suportado por design."
+      },
+      {
+        "name": "BodyFile",
+        "type": "string",
+        "description": "Alternativa a Body: le o corpo de um arquivo."
+      },
+      {
+        "name": "Attachment",
+        "type": "string[]",
+        "description": "Caminho(s) de anexo. Aceita multiplos. Cada um deve existir, ser arquivo e ter mais de 0 bytes."
+      }
+    ],
+    "optional": [
+      {
+        "name": "From",
+        "type": "string",
+        "description": "Sobrescreve o remetente configurado no setup do service.",
+        "default": "lido de config/<service>.json"
+      },
+      {
+        "name": "SmtpHost",
+        "type": "string",
+        "default": "smtp.gmail.com"
+      },
+      {
+        "name": "SmtpPort",
+        "type": "integer",
+        "default": 587
+      },
+      {
+        "name": "MaxTotalMB",
+        "type": "integer",
+        "description": "Teto da soma dos anexos.",
+        "default": 20
+      },
+      {
+        "name": "DryRun",
+        "type": "boolean",
+        "description": "Valida tudo e reporta o que seria enviado, sem conectar.",
+        "default": false
+      },
+      {
+        "name": "NoAudit",
+        "type": "boolean",
+        "description": "Nao grava na trilha de auditoria.",
+        "default": false
+      },
+      {
+        "name": "Json",
+        "type": "boolean",
+        "description": "Saida estruturada para a skill chamadora interpretar.",
+        "default": false
+      }
+    ],
+    "deliberately_absent": [
+      {
+        "name": "Password",
+        "reason": "Senha em linha de comando fica visivel para qualquer processo da maquina via Win32_Process e e gravada no historico do PSReadLine. A senha so entra por Read-Host -AsSecureString no -Action setup."
+      },
+      {
+        "name": "SkipCertificateCheck / DisableTls",
+        "reason": "TLS e obrigatorio por design. Nao ha caminho de degradacao para texto claro."
+      }
+    ]
+  },
+
+  "actions": [
+    {
+      "name": "send",
+      "description": "Acao padrao. Envia o email apos validar allowlist, credencial e anexos.",
+      "default": true
+    },
+    {
+      "name": "setup",
+      "description": "Interativo, uma unica vez por service: remetente, senha de app (oculta) e allowlist inicial."
+    },
+    {
+      "name": "add-recipient",
+      "description": "Autoriza um destinatario na allowlist do service."
+    },
+    {
+      "name": "remove-recipient",
+      "description": "Revoga um destinatario da allowlist do service."
+    },
+    {
+      "name": "list-recipients",
+      "description": "Lista a allowlist do service."
+    },
+    {
+      "name": "status",
+      "description": "Mostra config, presenca de credencial e allowlist do service."
+    },
+    {
+      "name": "logout",
+      "description": "Remove a credencial do service. Allowlist e auditoria sao preservadas."
+    }
+  ],
+
+  "storage": {
+    "base_dir_override": {
+      "env_var": "CLAUDE_SKILLS_CRED_DIR",
+      "description": "Quando definida, credencial, allowlist, config e auditoria passam a viver sob esse caminho em vez de %LOCALAPPDATA%. O script cria o diretorio se faltar e FALHA ALTO se nao conseguir - nunca cai de volta no padrao.",
+      "why": "Em maquina com perfil roaming corporativo ou pasta sincronizada, %LOCALAPPDATA% nao e estavel. Observado em 05/09/2026 (FLEXLPT200, USERDOMAIN_ROAMINGPROFILE=FLEXAM, OneDrive comercial): o arquivo de credencial voltava sozinho a uma versao anterior COM o timestamp antigo preservado - assinatura de restauracao por agente de perfil, nao de escrita que falhou. O efeito era um setup que verificava certo e minutos depois falhava com AUTH_FAILED, repetidamente.",
+      "scope_note": "Move os quatro artefatos, nao so a credencial: allowlist revertida bloqueia envio legitimo (exit 3) e config revertido faz o servico parecer nao configurado (exit 2) - mesma classe de bug, arquivo diferente.",
+      "dpapi_note": "Mover os arquivos nao invalida nada: o blob DPAPI e vinculado a usuario+maquina, nunca ao caminho.",
+      "current_value_on_this_machine": "D:\\claude-cofre\\credentials"
+    },
+    "credential": "<base>\\credential-manager\\email-sender.<service>__<remetente>.cred  (base = CLAUDE_SKILLS_CRED_DIR, ou %LOCALAPPDATA% por padrao)",
+    "allowlist": "<base>\\email-sender\\allowlist\\<service>.allowlist",
+    "config": "<base>\\email-sender\\config\\<service>.json",
+    "audit": "<base>\\email-sender\\audit\\<service>.log",
+    "note": "O formato e o diretorio da credencial sao os mesmos da skill credential-manager (ConvertFrom-SecureString / DPAPI); esta aqui apenas nunca materializa o texto plano em memoria.",
+    "collision_prefix": "O nome do arquivo de credencial leva o prefixo 'email-sender.' antes do nome do service. Sem ele, uma skill que use -Service 'simples-agenda' e cujo remetente SMTP seja o mesmo email do login da aplicacao geraria exatamente o mesmo caminho que a credential-manager usa para a senha de login, e uma senha sobrescreveria a outra silenciosamente."
+  },
+
+  "privacy": {
+    "lgpd_note": "Esta skill transporta arquivos que frequentemente contem dado pessoal. No caso da simples-agenda-download, a planilha traz nome, telefone, email, servico e profissional de pacientes - dado pessoal sensivel sob a LGPD (Lei 13.709/2018, Art. 5, II, por se referir a saude).",
+    "guidance": [
+      "Minimizacao (Art. 6, III): enviar a menor planilha que resolve o caso.",
+      "Finalidade (Art. 6, I): a allowlist e o registro concreto de quem tem finalidade legitima para receber; mante-la enxuta.",
+      "Seguranca (Art. 46): TLS em transito e DPAPI para credencial sao atendidos; o repouso na caixa do destinatario nao e.",
+      "Retencao: o log de auditoria acumula enderecos indefinidamente; estabelecer prazo de expurgo ou usar -NoAudit.",
+      "Anexos permanecem em Downloads apos o envio; quem gera e quem deve limpar."
+    ],
+    "audit_log_contains_personal_data": true,
+    "disclaimer": "Orientacao de engenharia, nao parecer juridico."
+  },
+
+  "permissions": {
+    "network": ["smtp.gmail.com:587 (TLS obrigatorio)", "ou o SmtpHost/SmtpPort informado pelo chamador"],
+    "file_system_read": ["caminhos de anexo informados pelo chamador"],
+    "file_system_write": ["%LOCALAPPDATA%\\email-sender\\"],
+    "credentials": ["%LOCALAPPDATA%\\credential-manager\\ (blob DPAPI, mesmo contrato da skill credential-manager)"]
+  },
+
+  "dependencies": {
+    "skills": [
+      {
+        "name": "credential-manager",
+        "path": "../credential-manager",
+        "relationship": "compartilha o formato e o local de armazenamento (DPAPI), mas NAO invoca o script dela no caminho de envio",
+        "reason": "credential_manager.ps1 exige -Password em linha de comando no save (visivel via Win32_Process) e devolve texto plano no stdout no load. Esta skill le e escreve o mesmo blob mantendo tudo em SecureString.",
+        "required": false
+      }
+    ]
+  },
+
+  "exit_codes": {
+    "0": "OK - enviado, ou dry-run validado",
+    "1": "INVALID_INPUT - destinatario/assunto invalido, header injection, campo faltando",
+    "2": "CREDENTIAL_MISSING - service sem setup ou credencial removida",
+    "3": "RECIPIENT_BLOCKED - destinatario fora da allowlist, ou allowlist vazia",
+    "4": "ATTACHMENT_ERROR - anexo inexistente, vazio ou acima do limite",
+    "5": "SEND_FAILED - falha SMTP generica (rede, servidor)",
+    "6": "AUTH_FAILED - senha de app recusada ou revogada",
+    "7": "TLS_ERROR - nao foi possivel exigir TLS 1.2+"
+  },
+
+  "caller_contract": {
+    "rule": "Falha de envio NAO deve derrubar a skill chamadora nem apagar o artefato ja produzido. Avisar e seguir.",
+    "example": "A simples-agenda-download ja gerou a planilha em Downloads antes de chamar o envio; se o envio falhar, a planilha permanece e a skill encerra com sucesso."
+  },
+
+  "testing": {
+    "last_run": "2026-09-05",
+    "verified_local": [
+      "status de service novo -> reporta nao configurado (exit 0)",
+      "envio sem allowlist -> bloqueio fail-closed (exit 3)",
+      "CR/LF no assunto -> rejeita header injection (exit 1)",
+      "destinatario malformado -> rejeita (exit 1)",
+      "add-recipient -> autoriza (exit 0)",
+      "envio para autorizado -> passa allowlist, para na credencial ausente (exit 2), provando que a allowlist e avaliada antes da credencial e da rede",
+      "envio para nao autorizado -> bloqueia (exit 3)",
+      "misto autorizado + nao autorizado -> bloqueio TOTAL, sem envio parcial (exit 3)",
+      "allowlist de outro service -> vazia, isolamento confirmado (exit 0)"
+    ],
+    "verified_live": [
+      "envio bem-sucedido (exit 0) - anexo .xlsx de 11908 bytes entregue por smtp.gmail.com:587 com TLS a um destinatario da allowlist, em 05/09/2026",
+      "AUTH_FAILED (exit 6) - Gmail recusou o AUTH e a skill classificou corretamente com orientacao de correcao",
+      "round-trip da credencial - blob DPAPI decifra, SecureString se forma e NetworkCredential preserva o comprimento, sem materializar texto plano"
+    ],
+    "not_yet_verified_live": [
+      "TLS_ERROR (exit 7)"
+    ],
+    "setup_pitfalls": [
+      {
+        "id": "app_password_with_spaces",
+        "symptom": "exit 6 (AUTH_FAILED) mesmo com uma senha de app legitima e 2FA ativo",
+        "cause": "o Google exibe a senha como 'abcd efgh ijkl mnop' e colar com os espacos e o comportamento natural, mas o AUTH do Gmail recusa a senha com espacos - eles sao so formatacao visual",
+        "status": "corrigido no script",
+        "fix": "ConvertTo-CompactSecureString remove os espacos antes de gravar e tambem na leitura (para credenciais salvas antes da correcao). A remocao percorre o BSTR nao gerenciado e o zera no finally, sem criar String gerenciada."
+      },
+      {
+        "id": "account_password_instead_of_app_password",
+        "symptom": "exit 6 (AUTH_FAILED) logo apos o setup",
+        "cause": "foi digitada a senha normal da conta Google; o Google bloqueia senha de conta em SMTP desde 2022",
+        "status": "corrigido no script",
+        "diagnosis": "senha de app tem exatamente 16 caracteres sem espacos. Conferir sem expor o valor: (ConvertTo-SecureString -String (Get-Content <cred> -Raw).Trim()).Length",
+        "fix": "o setup agora rejeita qualquer comprimento diferente de 16 na hora, em vez de deixar o erro aparecer so no primeiro envio"
+      },
+      {
+        "id": "silent_setup_without_credential",
+        "symptom": "setup imprime '[OK] Setup concluido' mas a credencial em disco continua a antiga",
+        "cause": "a guarda era 'if ($secure.Length -eq 0)'. Quando o terminal nao entrega o teclado ao script, Read-Host -AsSecureString devolve $null, e $null.Length tambem e $null - que nao e igual a 0. A guarda nao disparava, ConvertFrom-SecureString falhava, o Set-Content inteiro era pulado e a execucao seguia gravando a config.",
+        "status": "corrigido no script",
+        "impact": "o servico ficava aparentemente configurado mas com a credencial antiga - falha silenciosa sem nenhum sinal ate o primeiro envio",
+        "fix": "guarda passou a ser 'if ($null -eq $secure -or $secure.Length -eq 0)', mais try/catch em volta da gravacao que aborta com exit 2 em vez de seguir para a config"
+      }
+    ],
+    "diagnostic_lesson": "Os tres defeitos acima produziam o mesmo exit 6, e os timestamps dos arquivos sugeriam causas que nao eram a verdadeira. O que resolveu foi capturar a execucao real com Start-Transcript e ler o log, em vez de inferir o ocorrido pelo estado deixado em disco."
+  },
+
+  "limitations": [
+    "Somente texto puro - sem HTML por design",
+    "Sem criptografia do anexo (S/MIME, PGP, ZIP com senha)",
+    "Sem retry automatico - a skill chamadora decide se repete",
+    "Sem agendamento ou fila - envio sincrono",
+    "Windows apenas (DPAPI); Linux/macOS exigiria outro cofre",
+    "Nao gerencia a conta Google (2FA, senha de app) - manual por design"
+  ],
+
+  "documentation": {
+    "main": "SKILL.md"
+  },
+
+  "triggering_phrases": [
+    "enviar email",
+    "mandar por email",
+    "send email with attachment",
+    "configurar envio de email",
+    "autorizar destinatario",
+    "email sender"
+  ]
+}

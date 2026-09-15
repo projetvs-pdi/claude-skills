@@ -1,0 +1,99 @@
+{
+  "name": "credential-manager",
+  "version": "1.1.0",
+  "description": "Generic credential storage and retrieval using Windows DPAPI (PowerShell, no dependencies)",
+  "author": "Claude Code",
+  "created": "2026-09-01",
+  "updated": "2026-09-05",
+  "status": "production",
+
+  "entry_points": {
+    "powershell": "scripts/credential_manager.ps1"
+  },
+
+  "requirements": {
+    "powershell": ">=5.1",
+    "note": "Sem dependencias externas. Usa DPAPI nativo do Windows (ConvertTo-SecureString / ConvertFrom-SecureString)."
+  },
+
+  "parameters": {
+    "actions": [
+      {
+        "name": "save",
+        "description": "Salva credenciais de forma criptografada (DPAPI)",
+        "required": ["Username", "Password"],
+        "optional": ["Service", "Json"]
+      },
+      {
+        "name": "load",
+        "description": "Carrega credenciais salvas anteriormente",
+        "required": ["Username"],
+        "optional": ["Service", "Json"]
+      },
+      {
+        "name": "delete",
+        "description": "Deleta credenciais salvas (logout)",
+        "required": ["Username"],
+        "optional": ["Service", "Json"]
+      },
+      {
+        "name": "exists",
+        "description": "Verifica se existe credencial salva",
+        "required": ["Username"],
+        "optional": ["Service", "Json"]
+      },
+      {
+        "name": "get-or-prompt",
+        "description": "Carrega credencial existente ou pede interativamente e oferece salvar",
+        "required": ["Username"],
+        "optional": ["Service", "Json"]
+      }
+    ]
+  },
+
+  "storage": {
+    "default_dir": "%LOCALAPPDATA%\\credential-manager",
+    "override_env_var": "CLAUDE_SKILLS_CRED_DIR",
+    "override_note": "Em maquina com perfil roaming corporativo, %LOCALAPPDATA% pode reverter arquivos sozinho (sync de perfil). O override aponta o cofre para um caminho estavel; o blob DPAPI e vinculado a usuario+maquina, nao ao caminho.",
+    "file_pattern": "<service>__<username>.cred"
+  },
+
+  "permissions": {
+    "credentials": ["dpapi_windows"]
+  },
+
+  "error_scenarios": [
+    {
+      "code": "CREDENTIAL_NOT_FOUND",
+      "message": "Credenciais não encontradas para este serviço/usuário",
+      "action": "inform_user"
+    },
+    {
+      "code": "SAVE_OR_DELETE_FAILED",
+      "message": "Falha ao salvar/deletar credenciais (permissão ou disco)",
+      "action": "graceful_error"
+    }
+  ],
+
+  "exit_codes": {
+    "0": "OK",
+    "1": "CREDENTIAL_NOT_FOUND / SAVE_FAILED / INVALID_INPUT"
+  },
+
+  "documentation": {
+    "main": "SKILL.md"
+  },
+
+  "dependents": [
+    "simples-agenda-download (service=simples-agenda)",
+    "import-db-agenda (senha do MySQL)",
+    "email-sender (credencial SMTP, arquivo prefixado email-sender.<service>__<from>.cred)"
+  ],
+
+  "triggering_phrases": [
+    "save credentials",
+    "load credentials",
+    "delete credentials",
+    "credential manager"
+  ]
+}

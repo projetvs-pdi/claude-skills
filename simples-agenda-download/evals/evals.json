@@ -1,0 +1,40 @@
+{
+  "skill_name": "simples-agenda-download",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "basic-date-range-download",
+      "prompt": "I need to download my appointments from Simples Agenda for January 2024. Please get all appointments from 01/01/2024 to 31/01/2024 and save the file to my Downloads folder.",
+      "expected_output": "The skill should authenticate with Simples Agenda, call agendamento.php with the date parameters, download the .xls file, validate it, and save it to Downloads with a timestamp-based filename (e.g., agenda_2024_20240115_143025.xls). Confirm success message with exact file path.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "eval_name": "filtered-download-with-professional",
+      "prompt": "I need to export appointments from Simples Agenda for Q4 2024 (October 1 to December 31), but only for Professional ID 5 (João). Can you download that for me?",
+      "expected_output": "The skill should authenticate, apply date range (01/10/2024 to 31/12/2024) AND filter by professional ID 5, call agendamento.php, download filtered results, validate file, and save to Downloads with timestamp. Should confirm what filters were applied in the success message.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "eval_name": "date-format-validation",
+      "prompt": "Download my appointments from 2024-01-15 to 2024-02-15 from Simples Agenda",
+      "expected_output": "The skill should REJECT the date format (ISO format yyyy-mm-dd is invalid). Should respond with: 'Formato de data inválido. Use dd/mm/yyyy (exemplo: 01/01/2024)'. Should ask the user to provide dates in dd/mm/yyyy format and offer to retry.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "eval_name": "invalid-date-range",
+      "prompt": "Please export appointments from Simples Agenda from 31/12/2023 to 01/01/2023. I want to see if there are any appointments that month.",
+      "expected_output": "The skill should detect that End Date (01/01/2023) is BEFORE Start Date (31/12/2023) and REJECT. Should respond with: 'Data Fim deve ser maior ou igual a Data Início'. Should not call agendamento.php. Should ask user to correct the dates.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "eval_name": "authentication-and-session",
+      "prompt": "Download all appointments from Simples Agenda for this week (assume today is 15/01/2024, so 15/01/2024 to 21/01/2024). This is the first time I'm using this skill.",
+      "expected_output": "The skill should request Simples Agenda login credentials (not in plain text display to user, but for backend). Should store credentials securely. Should attempt to authenticate. Assuming success: authenticate, call agendamento.php with date range, download file, validate, save to Downloads with timestamp, and confirm success.",
+      "files": []
+    }
+  ]
+}

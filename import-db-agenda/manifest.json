@@ -1,0 +1,174 @@
+{
+  "name": "import-db-agenda",
+  "version": "2.0.0",
+  "description": "Sincroniza agendamentos (.xls do Simples Agenda) com a tabela MySQL sbx990 (banco 4clinics) e gera planilhas ordenadas a partir do banco",
+  "author": "Claude Code",
+  "created": "2026-09-01",
+  "updated": "2026-09-07",
+  "status": "production",
+
+  "note": "Skill ESPECIFICA (nao generica): hardcoded para a tabela sbx990 e para o layout de colunas exportado pelo Simples Agenda (AGENDAMENTOS). Nao e uma biblioteca de BD de proposito geral. Migrada de amzTerapia.agenda_realizada_status (localhost:3309) para 4clinics.sbx990 (localhost:3306) em 07/09/2026.",
+
+  "entry_points": {
+    "powershell": "scripts/db_manager.ps1"
+  },
+
+  "requirements": {
+    "note": "Sem Python funcional disponivel no ambiente de referencia; implementado 100% em PowerShell.",
+    "powershell": ">=5.1",
+    "external_tools": [
+      {
+        "name": "mysqlsh.exe (MySQL Shell)",
+        "purpose": "Executar SQL contra o MySQL (INSERT/UPDATE/SELECT) via --sql --json=raw",
+        "must_be_in_path": true
+      },
+      {
+        "name": "Microsoft Excel (COM)",
+        "purpose": "Ler o .xls exportado pelo Simples Agenda e escrever o .xlsx ordenado de saida",
+        "detect_with": "New-Object -ComObject Excel.Application"
+      }
+    ]
+  },
+
+  "dependencies": {
+    "skills": [
+      {
+        "name": "credential-manager",
+        "path": "../credential-manager",
+        "purpose": "Armazena a senha do MySQL com seguranca (service_name=mysql-agenda-db)."
+      }
+    ]
+  },
+
+  "parameters": {
+    "actions": [
+      {
+        "name": "init-schema",
+        "description": "NAO cria a tabela (sbx990 e gerenciada pelo sistema 4clinics, com FKs para xempresas/xfiliais). Valida que a tabela e as referencias (EmpresaId em xempresas, par EmpresaId+FilialOrigemId em xfiliais) existem, e cria (idempotente) a UNIQUE KEY de dedup uq_sync_empresa_filial_data_cliente (empresaId, filialId, dataAgenda, cliente) se ainda nao existir.",
+        "required": ["DbHost", "DbPort", "DbUser", "Database", "EmpresaId", "FilialOrigemId"]
+      },
+      {
+        "name": "sync",
+        "description": "Le um .xls do Simples Agenda e sincroniza (INSERT/UPDATE) na tabela sbx990, mapeando colunas conforme 'schema.column_mapping'. id e AUTO_INCREMENT (gerado pelo MySQL); dedup via ON DUPLICATE KEY UPDATE na UNIQUE KEY criada em init-schema.",
+        "required": ["DbHost", "DbPort", "DbUser", "Database", "XlsPath", "EmpresaId", "FilialId", "FilialOrigemId"]
+      },
+      {
+        "name": "export",
+        "description": "Consulta sbx990 (escopado a EmpresaId+FilialId) ordenado e gera um .xlsx de saida com os nomes de coluna 'amigaveis' (Data, Cliente, etc.), independente dos nomes reais da tabela. Sem -DataIni/-DataFim, exporta TODO o historico para aquele EmpresaId/FilialId.",
+        "required": ["DbHost", "DbPort", "DbUser", "Database", "OutputPath", "EmpresaId", "FilialId"],
+        "optional": [
+          "SortBy (cliente+data | servico+data | profissional+data, padrao cliente+data)",
+          "DataIni (dd/mm/yyyy) - filtra dataAgenda >= DataIni",
+          "DataFim (dd/mm/yyyy) - filtra dataAgenda <= DataFim (dia inteiro, ate 23:59:59)"
+        ]
+      },
+      {
+        "name": "logout",
+        "description": "Remove a senha do MySQL salva no credential-manager para DbUser."
+      }
+    ]
+  },
+
+  "schema": {
+    "table": "sbx990",
+    "database": "4clinics",
+    "host_port": "127.0.0.1:3306",
+    "table_managed_externally": true,
+    "table_managed_externally_note": "sbx990 pertence ao sistema 4clinics (FKs para xempresas/xfiliais, chave primaria auto_increment simples em id). Esta skill NUNCA cria/altera a estrutura de sbx990 alem de adicionar (uma vez, se ausente) a UNIQUE KEY de dedup.",
+    "primary_key": "id (INT AUTO_INCREMENT)",
+    "dedup_unique_key": {
+      "name": "uq_sync_empresa_filial_data_cliente",
+      "columns": ["empresaId", "filialId", "dataAgenda", "cliente"],
+      "rationale": "Nao existia por padrao em sbx990 (a PK e so id, auto_increment); criada por -Action init-schema para permitir ON DUPLICATE KEY UPDATE sem duplicar agendamentos entre sincronizacoes.",
+      "created_by": "esta skill, via -Action init-schema (idempotente)"
+    },
+    "fixed_identifiers": {
+      "note": "Colunas obrigatorias em sbx990 sem equivalente no Simples Agenda; usam valor fixo em todo INSERT feito por esta skill (parametros -EmpresaId/-FilialId/-FilialOrigemId).",
+      "empresaId": "001 (FK -> xempresas.id)",
+      "filialId": "01",
+      "filialOrigemId": "01 (junto com empresaId, FK -> xfiliais(empresaId, filialId))"
+    },
+    "column_mapping": {
+      "note": "Simples Agenda (planilha/antiga agenda_realizada_status) -> sbx990",
+      "data": "dataAgenda",
+      "data_acao": "dataAcao",
+      "executado_por": "executadoPor",
+      "cliente": "cliente (sem mudanca)",
+      "telefone": "telefone (sem mudanca)",
+      "email": "email (sem mudanca)",
+      "servico": "servico (sem mudanca)",
+      "observacao": "observacao (sem mudanca)",
+      "profissional": "profissional (sem mudanca)",
+      "status": "status (ENUM restrito - ver status_mapping)"
+    },
+    "status_mapping": {
+      "enum_values": ["Agendado", "Confirmado", "Atendendo", "Atendido", "Faltou", "Cancelado"],
+      "strategy": "match exato case-insensitive contra o texto livre do Simples Agenda; se nao bater com nenhum valor do ENUM, usa 'Agendado' como fallback e emite [AVISO] com a linha de origem"
+    },
+    "columns_auto_filled": {
+      "note": "Colunas NOT NULL de sbx990 sem origem no Simples Agenda, preenchidas automaticamente pelo INSERT desta skill.",
+      "ativo": "'1' (fixo)",
+      "controleId": "'1' (fixo)",
+      "userControle": "NULL",
+      "createdAt": "NOW() - so no INSERT inicial, nunca alterado em updates",
+      "userCreatedAt": "'simples-agenda-sync' - so no INSERT inicial",
+      "updatedAt": "NOW() - atualizado a cada sync que tocar a linha",
+      "userUpdatedAt": "'simples-agenda-sync' - atualizado a cada sync que tocar a linha"
+    },
+    "source_columns_simples_agenda": [
+      "Data", "Cliente", "Telefone", "Email", "Servico",
+      "Observacao", "Profissional", "Status", "Data Acao", "Executado por"
+    ],
+    "migration_history": "Ate 07/09/2026, esta skill usava amzTerapia.agenda_realizada_status (localhost:3309), tabela propria com PK auto_increment simples e sem FKs. Migrada para 4clinics.sbx990 (localhost:3306) a pedido do usuario. Estrutura de sbx990 confirmada via SHOW CREATE TABLE (4 leituras, ate estabilizar): PK (id) AUTO_INCREMENT, FKs para xempresas/xfiliais, sem UNIQUE KEY de negocio pre-existente."
+  },
+
+  "permissions": {
+    "network": ["conexao MySQL definida por -DbHost/-DbPort"],
+    "file_system": ["arquivo .xls de entrada", "arquivo .xlsx de saida"],
+    "credentials": ["credential-manager (skill separada, service_name=mysql-agenda-db)"]
+  },
+
+  "error_scenarios": [
+    {"code": "DB_CONNECTION_FAILED", "message": "Nao foi possivel conectar ao MySQL. Verifique host/porta/usuario/senha.", "action": "check_connection"},
+    {"code": "PASSWORD_REQUIRED", "message": "Senha do MySQL nao informada e nao ha nenhuma salva no credential-manager.", "action": "request_password"},
+    {"code": "TABLE_NOT_FOUND", "message": "Tabela sbx990 nao existe no banco informado. sbx990 e gerenciada externamente pelo 4clinics; verifique o -Database.", "action": "check_database"},
+    {"code": "FK_EMPRESA_NOT_FOUND", "message": "EmpresaId informado nao existe em xempresas. O sync falharia por violacao de FK.", "action": "check_empresa_id"},
+    {"code": "FK_FILIAL_NOT_FOUND", "message": "Par (EmpresaId, FilialOrigemId) nao existe em xfiliais. O sync falharia por violacao de FK.", "action": "check_filial_ids"},
+    {"code": "XLS_NOT_FOUND", "message": "Arquivo .xls informado nao existe.", "action": "check_path"},
+    {"code": "XLS_UNEXPECTED_FORMAT", "message": "O .xls nao tem as colunas esperadas (layout do Simples Agenda mudou?).", "action": "abort"},
+    {"code": "EXCEL_COM_UNAVAILABLE", "message": "Microsoft Excel nao esta instalado/registrado (COM Excel.Application indisponivel).", "action": "abort"},
+    {"code": "MYSQLSH_NOT_FOUND", "message": "mysqlsh.exe nao encontrado no PATH.", "action": "install_mysql_shell"}
+  ],
+
+  "exit_codes": {
+    "0": "OK",
+    "1": "DB_CONNECTION_FAILED",
+    "2": "PASSWORD_REQUIRED",
+    "3": "XLS_NOT_FOUND",
+    "4": "XLS_UNEXPECTED_FORMAT / TABLE_NOT_FOUND / FK_EMPRESA_NOT_FOUND / FK_FILIAL_NOT_FOUND",
+    "5": "EXCEL_COM_UNAVAILABLE",
+    "6": "MYSQLSH_NOT_FOUND",
+    "7": "INVALID_INPUT (parametros invalidos)"
+  },
+
+  "documentation": {
+    "main": "SKILL.md"
+  },
+
+  "testing": {
+    "verified_live": [
+      "07/09/2026: init-schema criou UNIQUE KEY uq_sync_empresa_filial_data_cliente (ausente por padrao em sbx990) e validou FKs para EmpresaId=001/FilialOrigemId=01.",
+      "07/09/2026: sync de 23 agendamentos (07/09/2026) em sbx990 - id AUTO_INCREMENT gerado corretamente (1..23), status mapeado para ENUM (Atendido, Faltou confirmados).",
+      "07/09/2026: sync repetido com o mesmo .xls -> total permaneceu 23 (dedup via ON DUPLICATE KEY UPDATE funcionando, sem duplicar).",
+      "07/09/2026: export gerou .xlsx com 23 linhas ordenadas por cliente+data, colunas com nomes 'amigaveis' preservados apesar do rename das colunas fonte."
+    ]
+  },
+
+  "triggering_phrases": [
+    "sincronizar agenda com o banco",
+    "importar agenda para o mysql",
+    "gerar planilha ordenada da agenda",
+    "sync sbx990",
+    "sync 4clinics"
+  ]
+}
