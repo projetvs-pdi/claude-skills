@@ -32,6 +32,14 @@ Autenticação: usa DOIS tokens diferentes, de propósito:
     bootstrap nunca é usado para essas escritas — ele só sabe gerenciar
     outros tokens e checar status.
 
+Ordem típica de uso (site novo, do zero, com domínio próprio):
+  1. zone_manager.py criar          (cria a zona, devolve os nameservers)
+  2. usuário configura os nameservers no registrador (manual, fora desta skill)
+  3. pages_manager.py criar         (cria o projeto Pages a partir de um repo Git,
+                                      se ainda não existir um projeto para publicar)
+  4. provisionar_dominio.py verificar-e-aplicar   (este script — roda quantas vezes
+                                      for preciso até a zona propagar)
+
 Exemplo:
 
   python provisionar_dominio.py verificar-e-aplicar \

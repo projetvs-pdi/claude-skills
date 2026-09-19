@@ -91,6 +91,67 @@ Corpo de criação:
 
 `ttl: 1` significa "automático" (recomendado quando `proxied: true`).
 
+## Cloudflare Pages — projetos e implantações
+
+| Ação | Método | Caminho |
+|---|---|---|
+| Listar projetos | GET | `/accounts/{account_id}/pages/projects` |
+| Ver um projeto | GET | `/accounts/{account_id}/pages/projects/{project_name}` |
+| Criar projeto (conectado a um repo Git) | POST | `/accounts/{account_id}/pages/projects` |
+| Listar implantações (deployments/builds) | GET | `/accounts/{account_id}/pages/projects/{project_name}/deployments` |
+| Adicionar domínio personalizado | POST | `/accounts/{account_id}/pages/projects/{project_name}/domains` |
+
+Corpo de criação de projeto conectado ao GitHub (`POST .../pages/projects`):
+
+```json
+{
+  "name": "meu-projeto",
+  "production_branch": "main",
+  "build_config": {
+    "build_command": "npm run build",
+    "destination_dir": "dist",
+    "root_dir": ""
+  },
+  "source": {
+    "type": "github",
+    "config": {
+      "owner": "minha-org",
+      "repo_name": "meu-repo",
+      "production_branch": "main",
+      "pr_comments_enabled": true,
+      "deployments_enabled": true,
+      "production_deployment_enabled": true
+    }
+  }
+}
+```
+
+**Pré-requisito que a API não cobre**: a conta precisa ter o GitHub/GitLab
+conectado como integração (autorização OAuth feita uma única vez pelo
+painel — ver `pages_manager.py`, seção "Pré-requisito" na docstring). Sem
+isso, a chamada acima falha porque a Cloudflare não tem permissão para ler
+o repositório indicado em `source.config`.
+
+### Comando de build / diretório de saída por framework (atalhos comuns)
+
+Variam conforme a configuração real do projeto — confirme sempre com quem
+mantém o repositório antes de assumir um destes valores às cegas:
+
+| Framework | Comando de build | Diretório de saída |
+|---|---|---|
+| Nenhum (HTML estático) | *(vazio)* | *(raiz)* |
+| React (Vite) | `npm run build` | `dist` |
+| React (Create React App) | `npm run build` | `build` |
+| Vue | `npm run build` | `dist` |
+| Next.js (export estático) | `npm run build` | `out` |
+| Nuxt | `npm run generate` | `dist` |
+| SvelteKit | `npm run build` | `build` |
+| Angular | `npm run build` | `dist` |
+| Hugo | `hugo` | `public` |
+| Jekyll | `jekyll build` | `_site` |
+| Gatsby | `npm run build` | `public` |
+| Astro | `npm run build` | `dist` |
+
 ## Erros comuns
 
 - **HTTP 403 / "Authentication error"**: a variável de ambiente aponta para

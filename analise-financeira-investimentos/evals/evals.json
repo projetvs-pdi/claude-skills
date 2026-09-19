@@ -1,0 +1,23 @@
+{
+  "skill_name": "analise-financeira-investimentos",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Quero começar minha reserva de emergência. Sou conservador, tenho R$ 10.000 para aplicar agora e consigo colocar R$ 500 por mês durante 12 meses. Preciso poder resgatar rápido se precisar. Onde invisto?",
+      "expected_output": "Relatório com até 3 sugestões de baixo risco e liquidez alta, cálculos líquidos de IR/taxas, fontes cruzadas",
+      "files": []
+    },
+    {
+      "id": 1,
+      "prompt": "Sou arrojado e quero montar patrimônio para aposentadoria em 60 meses. Começo com R$ 5.000 e aporto R$ 1.000 por mês. Tenho interesse em investimentos no exterior e em ouro. Quais você sugere?",
+      "expected_output": "Relatório com até 3 sugestões, incluindo exposição internacional/ouro, câmbio, tributação, cenários",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Quero investir meu dinheiro, onde eu coloco?",
+      "expected_output": "A skill não gera relatório; pergunta os parâmetros obrigatórios que faltam",
+      "files": []
+    }
+  ]
+}

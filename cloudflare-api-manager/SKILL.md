@@ -1,13 +1,13 @@
 ---
 name: cloudflare-api-manager
-description: Use esta skill sempre que o usuário pedir para criar, rotacionar ("rolar"), revogar ou listar tokens de API do Cloudflare, adicionar um domínio/zona novo, gerenciar registros DNS, ou aplicar as recomendações padrão do Cloudflare (conectar o domínio ao Cloudflare Pages, endurecer SPF/DMARC) assim que uma zona nova terminar de propagar — tudo via chamadas diretas à API REST do Cloudflare, sem clicar no painel web. Dispare também para "token do Cloudflare", "escopar um token pra uma zona", "apontar um CNAME/A/TXT", "adicionar site novo no Cloudflare", "credencial pra pipeline de deploy usar a API do Cloudflare", "a zona já propagou, aplica as recomendações", "conecta esse domínio ao meu projeto Pages", "configura SPF/DMARC pra não ter e-mail spoofado", ou qualquer pedido de automatizar algo antes feito manualmente no painel. Prefira sempre esta skill a orientar cliques no painel quando o usuário está no Claude Code (com shell) — o objetivo é eliminar esse passo manual.
+description: Use esta skill sempre que o usuário pedir para criar/rotacionar/revogar/listar tokens de API do Cloudflare, adicionar um domínio/zona novo, gerenciar registros DNS, publicar um site no Cloudflare Pages a partir de um repo GitHub/GitLab (criar projeto, configurar build, conectar domínio), ou aplicar as recomendações padrão do Cloudflare (SPF/DMARC) após uma zona propagar — tudo via API REST do Cloudflare, sem clicar no painel. Dispare para "token do Cloudflare", "escopar token pra uma zona", "CNAME/A/TXT", "site novo no Cloudflare", "publicar esse repositório no Pages", "buildar e implantar esse projeto", "credencial pra pipeline de deploy", "a zona já propagou, aplica as recomendações", "conecta esse domínio ao Pages", "SPF/DMARC pra não ter e-mail spoofado", ou automatizar algo antes feito manualmente no painel. Prefira sempre esta skill a orientar cliques no painel quando o usuário está no Claude Code (com shell).
 ---
 
 # Cloudflare API Manager
 
-Automatiza, via chamadas diretas à API REST da Cloudflare (`api.cloudflare.com/client/v4`), o que normalmente seria feito clicando no painel web: criar um domínio (zona), escopar e gerar tokens de API restritos a uma zona/conta, rotacionar (rolar) e revogar esses tokens, e gerenciar registros DNS.
+Automatiza, via chamadas diretas à API REST da Cloudflare (`api.cloudflare.com/client/v4`), o que normalmente seria feito clicando no painel web: criar um domínio (zona), escopar e gerar tokens de API restritos a uma zona/conta, rotacionar (rolar) e revogar esses tokens, gerenciar registros DNS, publicar um site no Cloudflare Pages a partir de um repositório GitHub/GitLab (criar o projeto, configurar a build, conectar o domínio) e aplicar as recomendações de segurança padrão (SPF/DMARC) assim que a zona propagar.
 
-Esta skill nasceu de um fluxo real feito manualmente pelo painel — criar um token restrito a uma zona (`DNS:Edit`, `Zone:Edit`, `Cloudflare Pages:Edit`), depois rotacioná-lo. Tudo isso agora é reproduzível por script, mais rápido e sem risco de clicar na opção errada.
+Esta skill nasceu de um fluxo real feito manualmente pelo painel — criar um token restrito a uma zona (`DNS:Edit`, `Zone:Edit`, `Cloudflare Pages:Edit`), rotacioná-lo, criar uma zona nova, conectar um repositório GitHub a um projeto Cloudflare Pages (escolhendo framework/comando de build), conectar domínio + www a esse projeto, e endurecer SPF/DMARC quando não há e-mail configurado. Tudo isso agora é reproduzível por script, mais rápido e sem risco de clicar na opção errada.
 
 ## Por que isso importa (e por que não usamos a Global API Key)
 
@@ -37,6 +37,16 @@ Antes de qualquer chamada real à API, duas variáveis de ambiente precisam exis
 ### Passo a passo: descobrir o Account ID
 
 Não é secreto, mas também não precisa ser adivinhado: está visível na URL do painel assim que você abre qualquer zona (`dash.cloudflare.com/<ACCOUNT_ID>/dominio.com/...`), ou em **Manage Account → Account Home**, no card "Account ID".
+
+### Passo a passo: conectar GitHub/GitLab ao Cloudflare Pages (uma única vez, só se for publicar sites via repositório)
+
+Só é necessário se for usar o fluxo 6 (publicar um site a partir de um repositório). É o **único passo desta skill que continua manual e não pode virar API** — é uma tela de autorização OAuth do GitHub/GitLab, não uma credencial que se gera no painel:
+
+1. Acesse `https://dash.cloudflare.com/<ACCOUNT_ID>/workers-and-pages/create/pages`.
+2. **Importar um repositório Git existente** → aba **GitHub** (ou **GitLab**) → botão **Conectar o GitHub**.
+3. Autorize o app "Cloudflare Pages" a acessar a organização/conta dona do(s) repositório(s) — dá para restringir a repositórios específicos.
+
+Depois desse passo único por conta, `pages_manager.py criar` funciona para qualquer repositório autorizado, sem precisar repetir a autorização.
 
 ### Configurando as variáveis com segurança
 
@@ -131,6 +141,27 @@ Opções úteis: `--sem-www` (conecta só a raiz), `--pular-seguranca-email` (n�
 É **seguro rodar esse comando várias vezes** (idempotente): ele sempre checa se o domínio personalizado / registro já existe antes de criar, então repetir a execução enquanto se espera a propagação nunca duplica nada nem falha por "já existe".
 
 Como a propagação pode demorar horas, **não bloqueie a conversa esperando**: explique ao usuário que a zona ainda está propagando, ofereça para checar de novo mais tarde (ex. lembrete ou nova mensagem do usuário), e não fique repetindo a chamada em loop apertado.
+
+### 6. Publicar um site novo a partir de um repositório Git (GitHub/GitLab)
+
+Equivalente ao fluxo manual: Workers e Pages → Criar aplicativo → "Importar um repositório Git existente" → selecionar repo → configurar build → "Salvar e implantar". Requer que o GitHub/GitLab já esteja conectado à conta (ver "Pré-requisitos" acima).
+
+```bash
+python pages_manager.py criar --projeto amazonasterapia-com-br \
+    --owner projetvs-pdi --repo amazonasterapia.com.br --branch main \
+    --framework react-vite
+```
+
+`--framework` é um atalho para o comando de build + diretório de saída dos frameworks mais comuns (`react-vite`, `react-cra`, `vue`, `next-static`, `nuxt`, `sveltekit`, `angular`, `hugo`, `jekyll`, `gatsby`, `astro`, `nenhum`) — **sempre confirme com quem mantém o repositório** antes de assumir um preset, já que configurações customizadas (ex. `outDir` diferente no Vite) quebram esse valor padrão. Quando não tiver certeza, pergunte em vez de adivinhar. Para casos fora da lista, use `--comando-build` e `--diretorio-saida` diretamente (veja a tabela completa em `references/api_reference.md`).
+
+```bash
+python pages_manager.py listar                                    # lista projetos existentes
+python pages_manager.py status --projeto amazonasterapia-com-br   # status da implantação mais recente (build/deploy)
+```
+
+É **seguro rodar `criar` mais de uma vez** (idempotente): se o projeto já existir, o script avisa e não faz nada, em vez de duplicar ou falhar.
+
+Depois que o projeto existir (`<projeto>.pages.dev` já está no ar), conecte o domínio próprio com o fluxo 5 (`provisionar_dominio.py verificar-e-aplicar --dominio ... --projeto-pages <projeto>`), que também cuida do SPF/DMARC. Ordem completa para publicar um site novo do zero, com domínio próprio: `zone_manager.py criar` → nameservers no registrador (manual) → `pages_manager.py criar` → `provisionar_dominio.py verificar-e-aplicar`.
 
 ## Regras de segurança (sempre, sem exceção)
 
