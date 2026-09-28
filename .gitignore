@@ -1,3 +1,4 @@
 find-skills
 skill-creator
 *-workspace
+__pycache__/
