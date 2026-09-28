@@ -6,7 +6,9 @@
 
 .DESCRIPTION
     Ações suportadas (-Action):
-      whoami            -> valida o token e mostra a conta associada
+      whoami            -> valida o token e mostra o ID/status do PRÓPRIO TOKEN
+                           (não é o account ID — para isso use list-accounts)
+      list-accounts     -> lista as contas CloudFlare visíveis a este token
       find-zone         -> procura zona existente para um domínio
       create-zone       -> cria a zona (site) do domínio na conta CloudFlare
       zone-status       -> consulta status da zona (pending/active) e nameservers
@@ -28,7 +30,7 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('whoami', 'find-zone', 'create-zone', 'zone-status', 'create-pages', 'attach-pages-domain', 'create-dns-record', 'list-dns-records', 'list-pages-projects', 'find-pages-project')]
+    [ValidateSet('whoami', 'list-accounts', 'find-zone', 'create-zone', 'zone-status', 'create-pages', 'attach-pages-domain', 'create-dns-record', 'list-dns-records', 'list-pages-projects', 'find-pages-project', 'list-deployments')]
     [string]$Action,
 
     [string]$ApiToken,          # opcional: se omitido, carrega do credential-manager
@@ -87,6 +89,10 @@ switch ($Action) {
         $r = Invoke-CF -Method GET -Path '/user/tokens/verify'
         Write-Out $r.result
     }
+    'list-accounts' {
+        $r = Invoke-CF -Method GET -Path '/accounts'
+        Write-Out $r.result
+    }
     'find-zone' {
         if (-not $Domain) { throw '-Domain é obrigatório para find-zone' }
         $r = Invoke-CF -Method GET -Path "/zones?name=$Domain"
@@ -130,6 +136,11 @@ switch ($Action) {
     'list-pages-projects' {
         if (-not $AccountId) { throw '-AccountId é obrigatório para list-pages-projects' }
         $r = Invoke-CF -Method GET -Path "/accounts/$AccountId/pages/projects"
+        Write-Out $r.result
+    }
+    'list-deployments' {
+        if (-not $AccountId -or -not $ProjectName) { throw '-AccountId e -ProjectName são obrigatórios para list-deployments' }
+        $r = Invoke-CF -Method GET -Path "/accounts/$AccountId/pages/projects/$ProjectName/deployments"
         Write-Out $r.result
     }
     'find-pages-project' {
