@@ -421,8 +421,6 @@ function Invoke-Sync {
                   (Get-SqlLiteral $row.status) + "," +
                   "'1'," +
                   (Get-SqlLiteral $FilialOrigemId) + "," +
-                  "'1'," +
-                  "NULL," +
                   "NOW()," +
                   "'simples-agenda-sync'," +
                   "NOW()," +
@@ -430,7 +428,7 @@ function Invoke-Sync {
         }
         $sql = @"
 INSERT INTO sbx990
-    (empresaId, filialId, dataAgenda, cliente, telefone, email, servico, observacao, dataAcao, executadoPor, profissional, status, ativo, filialOrigemId, controleId, userControle, createdAt, userCreatedAt, updatedAt, userUpdatedAt)
+    (empresaId, filialId, dataAgenda, cliente, telefone, email, servico, observacao, dataAcao, executadoPor, profissional, status, ativo, filialOrigemId, createdAt, userCreatedAt, updatedAt, userUpdatedAt)
 VALUES
     $($valueLines -join ",`n    ")
 ON DUPLICATE KEY UPDATE

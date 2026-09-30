@@ -4,7 +4,7 @@
   "description": "Sincroniza agendamentos (.xls do Simples Agenda) com a tabela MySQL sbx990 (banco 4clinics) e gera planilhas ordenadas a partir do banco",
   "author": "Claude Code",
   "created": "2026-09-01",
-  "updated": "2026-09-07",
+  "updated": "2026-09-28",
   "status": "production",
 
   "note": "Skill ESPECIFICA (nao generica): hardcoded para a tabela sbx990 e para o layout de colunas exportado pelo Simples Agenda (AGENDAMENTOS). Nao e uma biblioteca de BD de proposito geral. Migrada de amzTerapia.agenda_realizada_status (localhost:3309) para 4clinics.sbx990 (localhost:3306) em 07/09/2026.",
@@ -108,8 +108,6 @@
     "columns_auto_filled": {
       "note": "Colunas NOT NULL de sbx990 sem origem no Simples Agenda, preenchidas automaticamente pelo INSERT desta skill.",
       "ativo": "'1' (fixo)",
-      "controleId": "'1' (fixo)",
-      "userControle": "NULL",
       "createdAt": "NOW() - so no INSERT inicial, nunca alterado em updates",
       "userCreatedAt": "'simples-agenda-sync' - so no INSERT inicial",
       "updatedAt": "NOW() - atualizado a cada sync que tocar a linha",
@@ -119,7 +117,7 @@
       "Data", "Cliente", "Telefone", "Email", "Servico",
       "Observacao", "Profissional", "Status", "Data Acao", "Executado por"
     ],
-    "migration_history": "Ate 07/09/2026, esta skill usava amzTerapia.agenda_realizada_status (localhost:3309), tabela propria com PK auto_increment simples e sem FKs. Migrada para 4clinics.sbx990 (localhost:3306) a pedido do usuario. Estrutura de sbx990 confirmada via SHOW CREATE TABLE (4 leituras, ate estabilizar): PK (id) AUTO_INCREMENT, FKs para xempresas/xfiliais, sem UNIQUE KEY de negocio pre-existente."
+    "migration_history": "Ate 07/09/2026, esta skill usava amzTerapia.agenda_realizada_status (localhost:3309), tabela propria com PK auto_increment simples e sem FKs. Migrada para 4clinics.sbx990 (localhost:3306) a pedido do usuario. Estrutura de sbx990 confirmada via SHOW CREATE TABLE (4 leituras, ate estabilizar): PK (id) AUTO_INCREMENT, FKs para xempresas/xfiliais, sem UNIQUE KEY de negocio pre-existente. Em 28/09/2026, corrigido: colunas controleId e userControle nao existem em sbx990 (remoção do INSERT e alinhamento do manifest)."
   },
 
   "permissions": {
@@ -160,7 +158,8 @@
       "07/09/2026: init-schema criou UNIQUE KEY uq_sync_empresa_filial_data_cliente (ausente por padrao em sbx990) e validou FKs para EmpresaId=001/FilialOrigemId=01.",
       "07/09/2026: sync de 23 agendamentos (07/09/2026) em sbx990 - id AUTO_INCREMENT gerado corretamente (1..23), status mapeado para ENUM (Atendido, Faltou confirmados).",
       "07/09/2026: sync repetido com o mesmo .xls -> total permaneceu 23 (dedup via ON DUPLICATE KEY UPDATE funcionando, sem duplicar).",
-      "07/09/2026: export gerou .xlsx com 23 linhas ordenadas por cliente+data, colunas com nomes 'amigaveis' preservados apesar do rename das colunas fonte."
+      "07/09/2026: export gerou .xlsx com 23 linhas ordenadas por cliente+data, colunas com nomes 'amigaveis' preservados apesar do rename das colunas fonte.",
+      "28/09/2026: corrigido INSERT - removidas colunas controleId e userControle que nao existem em sbx990. Sync de 217 agendamentos (21/09-27/09) bem-sucedido; export de 195 linhas e envio de email confirmado."
     ]
   },
 
