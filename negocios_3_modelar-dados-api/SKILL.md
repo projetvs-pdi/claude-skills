@@ -1,6 +1,6 @@
 ---
 name: modelar-dados-api
-description: Traduz uma regra de negócio aceita em estrutura de dados e API — tabelas, migrations, models, relações, multi-tenant, concorrência, auditoria, contrato de rotas e códigos de recusa, com os testes do back. Use ao criar ou alterar tabela, model, migration, rota ou regra de acesso no servidor. Segunda etapa de entregar-funcionalidade; parte da saída de definir-regra-negocio. Toda escrita aplica integridade-transacional.
+description: Traduz uma regra de negócio aceita em estrutura de dados e API — tabelas, migrations, models, relações, multi-tenant, concorrência, auditoria, contrato de rotas e códigos de recusa, com os testes do back. Use ao criar ou alterar tabela, model, migration, rota ou regra de acesso no servidor. Segunda etapa de entregar-funcionalidade; parte da saída de definir-regra-negocio. Toda escrita aplica integridade-transacional; toda rota aplica seguranca-owasp.
 ---
 
 # Modelar dados e API
@@ -24,6 +24,10 @@ Entrada: seção **1. Regra** da ficha. Saída: seção **2. Dados e API** e o c
 2. **O filtro de listagem é a mesma regra em forma de consulta.** Quando a regra existe em duas formas (filtro no banco e função na memória), criar um **teste de equivalência**: gerar muitos cenários aleatórios e afirmar que o filtro e a função escolhem exatamente os mesmos registros.
 3. **Falha fechada.** Contexto não carregado (ex.: lista de transferências ausente) lança erro, não libera.
 4. **Sem permissão de leitura → 404** quando dizer "existe, mas você não pode ver" já vaza informação.
+
+## Segurança
+
+Aplicar a skill `seguranca-owasp` (OWASP Top 10:2025) e preencher a seção 2b da ficha: rota nova sempre atrás da peça de autenticação, escopo e permissão (negar por padrão); erro interno nunca vai na resposta (tratador global, mensagem genérica + identificador); entrada nunca entra em texto de SQL; exportação neutraliza fórmula; ação sensível e recusa entram no log, sem conteúdo sensível.
 
 ## Contrato da API
 
@@ -51,6 +55,7 @@ Entrada: seção **1. Regra** da ficha. Saída: seção **2. Dados e API** e o c
 - [ ] Conflito de versão/estado → 409.
 - [ ] **Concorrência real** contra o banco (largada simultânea, exatamente uma vence, nenhum 500, invariante relido), 5× seguidas — ver `integridade-transacional` §6.
 - [ ] Contrato: nenhum código novo abre transação na mão nem gera código sem trava.
+- [ ] **Segurança** (`seguranca-owasp` §4): perfil recusado, isolamento entre empresas, entrada hostil, erro sem detalhe interno.
 - [ ] Teste do mapa de relações atualizado.
 - [ ] Mocks de models centralizados, para tabela nova não quebrar testes antigos.
 

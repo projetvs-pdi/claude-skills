@@ -27,7 +27,10 @@ async function comTransacao(fn, { tentativas = 3, esperaMs = [30, 120], sequeliz
       return resultado;
     } catch (e) {
       // deadlock: o banco já desfez; espera esgotada: só o comando → desfazer sempre
-      if (!t.finished) await t.rollback().catch(() => {});
+      // try/catch, não `.rollback().catch(...)`: se rollback não devolver promessa (mock, embrulho), `.catch` vira TypeError
+      if (!t.finished) {
+        try { await t.rollback(); } catch (_) { /* falha ao desfazer não esconde o erro original */ }
+      }
       if (!ehConflitoDeTrava(e)) throw e;
       if (tentativa >= tentativas) {
         throw new ErroNegocio('Outra pessoa está gravando este registro agora. Tente de novo.', 409, { codigo: 'CONCORRENCIA_TENTE_NOVAMENTE' });
@@ -69,6 +72,24 @@ static async store(req, res) {
 ```
 
 Resposta que depende de variáveis de dentro: `fn` devolve `async () => res.status(200).json(...)` e o controller chama `return await (await comTransacao(...))()`.
+
+Acumulador (resumo de sincronização, lista de avisos): `fn` devolve o que fez e o acumulador recebe **depois** do commit — nunca `resumo.push(...)` dentro de `fn`, que duplicaria na repetição.
+
+```js
+const feito = await comTransacao(async (t) => { /* … */ return { incluidos, removidos }; }, { rotulo: 'sync' });
+resumo.push(feito); // só a tentativa que confirmou
+```
+
+## Dinheiro em DECIMAL com getter
+
+```js
+valor: {
+  type: DataTypes.DECIMAL(12, 2), // o driver devolve string
+  get() { const v = this.getDataValue('valor'); return v == null ? v : Number(v); },
+},
+```
+
+`registro.dataValues` e `raw: true` **não** passam pelo getter: resposta montada assim recebe `valor: registro.valor` explícito.
 
 ## Trava da sequência sem reservar
 

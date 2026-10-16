@@ -11,6 +11,8 @@ Dois modos de uso:
 - **Desenho** (funcionalidade nova ou mudança): preencher a parte "Concorrência" da seção 2 da ficha (ver `modelar-dados-api`) com as regras abaixo e os testes da §6.
 - **Adequação** (projeto existente): levantamento → inventário → ondas (§7).
 
+Cadastros simples: uma **peça comum** de gravação (incluir, alterar, excluir e travar o pai) que todos os controllers usam, em vez de repetir o padrão em cada um; o contrato estático confere a peça uma vez. Alterar **devolve o registro relido** depois da gravação (com a versão nova), para a tela seguir sem recarregar. A lista de campos permitidos na alteração **nunca** inclui chave, tenant ou versão.
+
 Antes de propor, ler o que o projeto já tem (função de transação, controle de versão, gerador de códigos, padrão de erro de negócio) e **reaproveitar**. Só criar o que falta, num lugar comum.
 
 ## 1. Regras (T1–T9)
@@ -18,13 +20,13 @@ Antes de propor, ler o que o projeto já tem (função de transação, controle 
 | # | Regra | Como |
 |---|---|---|
 | T1 | **Tudo ou nada.** Validação que depende do banco, gravações, geração de códigos, histórico e log de auditoria na **mesma transação**. Qualquer erro desfaz tudo, inclusive o contador de códigos. A resposta sai **depois** do commit. | Uma função comum de transação gerenciada (§2). Log e histórico recebem a mesma transação. |
-| T2 | **A linha dona serializa o agregado.** Antes de ler e contar o que decide a gravação (saldo, soma, uso, "já existe"), travar a linha dona com `SELECT … FOR UPDATE`. | A dona é a linha cuja trava impede a decisão errada (o pacote para o saldo, o pai para a exclusão), não necessariamente a que muda. Leituras de apoio (cadastro ativo, nome) não precisam de trava. |
+| T2 | **A linha dona serializa o agregado.** Antes de ler e contar o que decide a gravação (saldo, soma, uso, "já existe"), travar a linha dona com `SELECT … FOR UPDATE`. | A dona é a linha cuja trava impede a decisão errada (o pacote para o saldo, o pai para a exclusão), não necessariamente a que muda. Leituras de apoio (cadastro ativo, nome) não precisam de trava. **Incluir filha trava o pai**: sem isso, excluir o pai ao mesmo tempo deixa a filha órfã (a exclusão apaga as filhas que existem e a nova entra logo depois). Pai sumiu → recusa orientada. **"Só um ativo por X" / "um por usuário"** que o UNIQUE não expressa (depende de status, período ou outra tabela): a dona é a linha de X (o plano para "uma tabela de preço ativa por plano", o vínculo usuário × empresa para "um profissional por usuário"); travar X e só então contar. |
 | T3 | **Ordem fixa de travas** em todo o código (§3). Várias linhas do mesmo tipo: `id` crescente. | Quem trava fora de ordem cria ciclo de espera entre rotinas diferentes → deadlock. |
 | T4 | **Deadlock e espera de trava**: desfazer e **repetir a transação inteira** (padrão: até 2 repetições). Persistiu → 409 com código estável (ex.: `CONCORRENCIA_TENTE_NOVAMENTE`) e "Outra pessoa está gravando este registro agora. Tente de novo." | Na função comum. Reduzir a espera máxima por trava das conexões da API (ex.: 10 s) para não parecer tela travada. |
 | T5 | **Versão otimista** para quem estava com a tela aberta: a versão enviada é conferida **depois** da trava (ou por `UPDATE … WHERE versao = ?`, que é atômico). Toda gravação sobe a versão. | 409 de "registro alterado" + "carregar atuais". Exclusão: travar e só então conferir a versão. |
 | T6 | **Códigos sob trava.** Gerador de códigos/sequência lido e incrementado com trava, reservando de uma vez a quantidade do lote. Nunca "ler o último + 1" sem trava. | Teste de contrato que proíbe o gerador antigo (§6). |
 | T7 | **Conferência antes do commit** onde há dinheiro ou saldo: reler do banco o invariante (Σ parcelas = total, saldo ≥ 0) e desfazer tudo se não fechar (500 com código de integridade). | Protege contra erro de código. O registro da falha vai para o log do servidor: um log na mesma transação seria desfeito junto. |
-| T8 | **Banco como última barreira** (vale para SQL manual e scripts): PK/UNIQUE, FK composta, `CHECK`, e `TRIGGER` que recusa alterar dado imutável. | Migration reversível, backup antes, teste por SQL direto. Inclui `UNIQUE (tenant, id)` quando a PK não garante id único por tenant. |
+| T8 | **Banco como última barreira** (vale para SQL manual e scripts): PK/UNIQUE, FK composta, `CHECK`, e `TRIGGER` que recusa alterar dado imutável. **Dinheiro em `DECIMAL`, nunca `FLOAT`** (R$ 12.345,67 em FLOAT volta 12345.7). | Migration: contar duplicados/valores fora do novo tipo antes, backup, testar up → down → up, teste por SQL direto. Inclui `UNIQUE (tenant, id)` quando a PK não garante id único por tenant. Getter que converte DECIMAL em número não vale para `dataValues`/`raw`: resposta montada assim põe o valor convertido explicitamente. |
 | T9 | **Testes de concorrência reais** contra o banco, sem mock (§6). | Exatamente uma vence, as outras recebem a recusa prevista, o invariante relido confere. |
 
 Proporcional ao risco: cadastro simples precisa de T1, T4, T5, T6 e T8. Dinheiro, saldo e recurso disputado precisam de todas.
@@ -35,7 +37,7 @@ Uma única porta (ex.: `comTransacao(fn, { tentativas })`) que: abre a transaç�
 
 Regras para quem escreve `fn`:
 1. Não responde nem faz commit/rollback: **devolve os dados**; a resposta sai depois. Se a resposta precisa de variáveis de dentro, `fn` devolve uma função que responde, chamada depois do commit.
-2. Pode rodar mais de uma vez: tudo o que decide é lido de novo dentro dela; nenhum efeito externo (e-mail, arquivo, fila) dentro.
+2. Pode rodar mais de uma vez: tudo o que decide é lido de novo dentro dela; nenhum efeito externo (e-mail, arquivo, fila) dentro. **Acumuladores declarados fora de `fn`** (lista de resumo, soma, contagem) duplicam na repetição: acumular só depois do commit, a partir do que `fn` devolveu, ou zerar no início de cada tentativa.
 3. Toda chamada ao banco leva a transação (log e histórico inclusive).
 4. Erro de negócio não é repetido. Validação sem banco fica fora, antes.
 5. Saída antecipada sem escrita (ex.: "em uso", "já fechado") é um `return` normal: o commit de uma transação sem escrita não grava nada.
@@ -43,7 +45,10 @@ Regras para quem escreve `fn`:
 Detalhes que costumam escapar:
 - No **deadlock** o banco já desfez a transação; na **espera de trava esgotada** só o comando foi desfeito → desfazer sempre explicitamente.
 - O driver/ORM pode embrulhar o erro: reconhecer pelo código/errno em todos os níveis (`original`, `parent`, o próprio erro).
-- O tratador genérico de erros também converte deadlock que escapou para o mesmo 409, nunca 500.
+- O tratador genérico de erros também converte deadlock que escapou para o mesmo 409, nunca 500. Idem erro de FK (pai sumiu / filho impede): 409/422 com código de vínculo, sem depender de campos que o driver nem sempre preenche (ex.: nome da tabela).
+- Erro de validação dentro de `fn` é erro de negócio (400 com código), não `throw new Error` genérico: senão vira 500.
+- **REPEATABLE READ fixa a fotografia na primeira leitura comum da transação.** Leitura prévia para descobrir o dono (antes de travar) vai **fora** da transação; dentro, as conferências depois da trava enxergariam dados velhos. Leituras travadas (`FOR UPDATE`) sempre veem o último dado confirmado.
+- **Contar filhos antes de mudar o pai: leitura TRAVADA dos filhos.** A inclusão do filho trava, para a FK, o índice que a FK usa no pai, que pode não ser o registro que o `FOR UPDATE` do pai pegou. Travar só o pai não espera a venda em andamento; a leitura travada dos filhos espera e enxerga a linha nova.
 
 ## 3. Ordem global de travas
 
@@ -61,7 +66,7 @@ Escrever a ordem **do projeto** num documento e segui-la em toda rotina:
 
 **Mudança que troca o dono** (mover um item para outro agregado): ler o dono atual **sem trava**, travar os donos envolvidos em ordem, travar o item e conferir que o dono não mudou no meio (senão 409 de registro alterado).
 
-Aplicar a ordem a **todas** as rotinas que disputam as mesmas linhas, ou nenhuma: aplicar em parte pode criar um ciclo novo.
+Aplicar a ordem a **todas** as rotinas que disputam as mesmas linhas, ou nenhuma: aplicar em parte pode criar um ciclo novo. **Scripts, importações e jobs** que escrevem nas mesmas tabelas entram nessa conta: uma carga que apaga e renumera segura a linha da sequência durante a troca, e a inclusão pela API no meio espera e recebe o código seguinte.
 
 ## 4. Recusas e tela
 
@@ -72,7 +77,7 @@ Aplicar a ordem a **todas** as rotinas que disputam as mesmas linhas, ou nenhuma
 | Sem versão | 428 | `VERSAO_OBRIGATORIA` | Recarregar |
 | Invariante não fechou | 500 | `INTEGRIDADE_…` | "Nada foi gravado. Avise o suporte." |
 
-O "Tentar de novo" fica **num ponto só** do front (o cliente HTTP comum segura a resposta e pergunta), não em cada tela. Sem resposta da pessoa em um tempo razoável, desiste e entrega o erro à tela.
+O "Tentar de novo" fica **num ponto só** do front (o cliente HTTP comum segura a resposta e pergunta), não em cada tela. Vários 409 ao mesmo tempo entram numa **fila** (um aviso, todos reenviados ou desistidos). Sem resposta da pessoa em um tempo razoável (ex.: 60 s), desiste e entrega o erro à tela.
 
 ## 5. Ficha: o que registrar na seção "Concorrência"
 
@@ -92,17 +97,21 @@ O "Tentar de novo" fica **num ponto só** do front (o cliente HTTP comum segura 
 - Asserções: contagem por status+código (`{ 201: 1, '409:SEM_SALDO': 4 }`), **nenhum 500**, invariante **relido do banco**, ids únicos.
 - Cenários típicos: N × incluir no mesmo agregado com saldo 1; mesmo recurso (horário, item) por agregados diferentes; lote × lote; desfazer × refazer; ação do usuário × rotina automática; confirmar × cancelar; mover × incluir no mesmo dono.
 - Rodar **5 vezes seguidas** antes de concluir; falha intermitente se investiga, não se ignora.
+- **A fila pode mascarar o teste:** se duas inclusões já se serializam pela sequência de códigos, "inclusão × inclusão" passa mesmo sem a trava da linha dona. Testar também o caminho que não passa pela fila (ex.: ativar por edição).
+- Para provar a disputa de forma determinística, segurar uma transação aberta no meio (ex.: venda inserida e não confirmada), disparar a rotina, conferir que ela **está esperando** e só então confirmar.
 - **Provar que o teste discrimina:** rodar o cenário com a correção desligada (cópia temporária com o comportamento antigo). Se o antigo também passa, o relato diz: "a correção é preventiva; o teste não reproduz a falha".
 
 **Dados de teste em banco compartilhado:**
 - Marca identificável (prefixo no nome) e datas sem uso real (ex.: daqui a anos).
-- Limpeza no fim **e no início** (recupera sobra de rodada que caiu antes de limpar).
+- Limpeza no fim **e no início** (recupera sobra de rodada que caiu antes de limpar). Apagar também as filhas pelo **usuário de teste** (ex.: `userCreatedAt`), não só pelo pai marcado: numa rodada que falhou o pai pode já ter sumido e deixado órfãs.
 - A limpeza respeita os `CHECK`/FK do banco (ex.: zerar colunas que só existem em par).
 - Contadores de código devolvidos ao valor anterior **só se** ninguém usou códigos depois.
 - Conferir depois da suíte: zero sobras, contadores no lugar.
+- **Arquivos de teste em paralelo** (o executor roda arquivos ao mesmo tempo no mesmo banco): marca **própria por arquivo** (a limpeza de um não apaga o outro); trava nomeada no banco (ex.: `GET_LOCK`) entre arquivos que escrevem; devolver contador só se ele ainda estiver no valor lido logo antes; prazo dos ganchos (`beforeAll`/`afterAll`) maior que a espera da trava.
+- Conferências globais (ex.: "contador à frente do maior id") leem tudo **numa só consulta**: em duas, uma inclusão de outro teste no meio vira falso alarme.
 
 **Contrato (estático):**
-- Nenhum arquivo novo abre transação na mão nem usa o gerador de códigos sem trava. Lista de **pendências que só diminui**: arquivo corrigido precisa sair da lista (o progresso fica registrado).
+- Nenhum arquivo novo abre transação na mão nem usa o gerador de códigos sem trava. Lista de **pendências que só diminui**: arquivo corrigido precisa sair da lista (o progresso fica registrado). Zerada a lista, remover o gerador antigo e o contrato passa a exigir que ele **não exista** nem seja chamado (inclusive por scripts).
 - Nenhuma resposta sai de dentro da transação.
 - Unitários da função comum: commit, rollback sem repetir em erro de negócio, repetição em cada código de trava, esgotou → 409, rollback explícito na espera de trava.
 - Integração: provocar um deadlock de verdade (duas conexões travando duas linhas em ordem cruzada) e uma espera esgotada (conexão de teste com espera curta).
@@ -111,10 +120,12 @@ O "Tentar de novo" fica **num ponto só** do front (o cliente HTTP comum segura 
 - Timer de cache/limpeza sem `unref` deixa o processo de teste vivo (a suíte "termina" mas não sai).
 - Teste unitário com models simulados quebra quando a rotina passa a travar a sequência: simular a função de trava, não o banco inteiro.
 - Liberação de trava marcada por relógio no teste é intermitente; amarrar ao evento (ex.: liberar só na 2ª tentativa).
+- Contador de códigos atrás do maior id (carga com id explícito sem subir o contador) faz a próxima inclusão falhar: manter um teste que confere todos os contadores contra os dados.
+- `show`/leitura que abre transação e retorna antes do commit deixa conexão presa: leitura simples não abre transação.
 
 ## 7. Adequação de projeto existente
 
-1. **Levantamento** (somente leitura): onde se abre transação, onde há `FOR UPDATE`, quem gera código sem trava, quem trata deadlock, log fora da transação, resposta antes do commit; configuração do banco (isolamento, espera de trava); chaves que não garantem id único por tenant; contagem de duplicados existentes.
+1. **Levantamento** (somente leitura): onde se abre transação, onde há `FOR UPDATE`, quem gera código sem trava, quem trata deadlock, log fora da transação, resposta antes do commit; configuração do banco (isolamento, espera de trava); chaves que não garantem id único por tenant; contagem de duplicados existentes; colunas de dinheiro em `FLOAT`; contadores atrás dos dados; scripts/importações que escrevem; **rotas genéricas ou legadas que escrevem em tabelas de controle** (contador, configuração) — excluir uma linha de contador derruba todas as inclusões daquela tabela: se o front não usa, deixar só leitura.
 2. **Inventário** por rotina: regras feridas (T1–T9) e risco — dinheiro > saldo > agenda/recurso > cadastro.
 3. **Ondas**: 0 fundação (função comum, código de recusa, espera de trava, apoio de teste, contrato com pendências) → rotinas de dinheiro e saldo → configuração com valor → cadastros → limpeza (remover gerador antigo, barreiras restantes, documentos).
 4. Cada onda: documento atualizado, testes novos + suítes completas, concorrência 5× verde, relato honesto do que não foi verificado. Implementar só com autorização explícita por onda.

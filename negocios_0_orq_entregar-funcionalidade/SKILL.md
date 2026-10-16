@@ -1,6 +1,6 @@
 ---
 name: entregar-funcionalidade
-description: Conduz uma funcionalidade nova ou mudança de regra de ponta a ponta — regra de negócio, dados/API, interface e validação — em fases com gate. Use ao iniciar qualquer funcionalidade, fase de roadmap ou mudança de regra que atravesse back e front. Coordena as skills definir-regra-negocio, modelar-dados-api, integridade-transacional, desenhar-interface e aplicar-design-system.
+description: Conduz uma funcionalidade nova ou mudança de regra de ponta a ponta — regra de negócio, dados/API, interface e validação — em fases com gate. Use ao iniciar qualquer funcionalidade, fase de roadmap ou mudança de regra que atravesse back e front. Coordena as skills definir-regra-negocio, modelar-dados-api, integridade-transacional, seguranca-owasp, desenhar-interface e aplicar-design-system.
 ---
 
 # Entregar funcionalidade (orquestração)
@@ -10,8 +10,8 @@ Uma funcionalidade passa por quatro etapas, sempre nesta ordem. Cada etapa preen
 | Etapa | Skill | Sai daqui |
 |---|---|---|
 | 1. Regra | `definir-regra-negocio` | decisões, perfis, efeitos, recusas, critérios de aceite |
-| 2. Dados e API | `modelar-dados-api` + `integridade-transacional` | tabelas, contrato da API, códigos de recusa, auditoria, concorrência (linha dona, ordem de travas, invariantes) |
-| 3. Interface | `desenhar-interface` + `aplicar-design-system` | telas por perfil e tamanho, mensagens, estados — construídas com os tokens e componentes do sistema |
+| 2. Dados e API | `modelar-dados-api` + `integridade-transacional` + `seguranca-owasp` | tabelas, contrato da API, códigos de recusa, auditoria, concorrência (linha dona, ordem de travas, invariantes), segurança (acesso, entrada, abuso, log, erros) |
+| 3. Interface | `desenhar-interface` + `aplicar-design-system` (+ `seguranca-owasp` §1 S5/S10) | telas por perfil e tamanho, mensagens, estados — construídas com os tokens e componentes do sistema, sem HTML injetado e sem detalhe interno nas mensagens |
 | 4. Validação | esta skill | testes, navegador, capturas, documentação |
 
 ## Regras do processo
@@ -22,7 +22,8 @@ Uma funcionalidade passa por quatro etapas, sempre nesta ordem. Cada etapa preen
 4. **Back é a fonte da verdade.** Toda regra existe no back; a tela só orienta. Mudou a regra (ex.: campo deixou de ser obrigatório)? Muda back, tela, testes dos dois lados e documentação juntos.
 5. **Mostrar cedo.** Capturar telas assim que a primeira versão roda e mostrar ao usuário — a maior parte dos ajustes de interface surge ao ver.
 6. **Pedido com imagem descreve um caso, não o problema inteiro.** Procurar os outros lugares onde o mesmo problema acontece (ex.: corrigiu na consulta bloqueada, conferir também na edição).
-7. **Decisão de produto vira regra durável.** Quando o usuário disser "já alinhamos que…", registrar a regra (memória/ficha) para não depender de repetição.
+7. **Segurança entra no desenho, não no fim.** A seção 2b da ficha (`seguranca-owasp` §2) é preenchida junto com dados e API; falha de segurança achada no gate volta para a etapa em que nasceu. Referência: OWASP Top 10 — antes de usar, cumprir o Passo 0 de `seguranca-owasp` (confirmar com FireCrawl na página da OWASP se a edição registrada ainda é a vigente; se não for, atualizar a skill antes de implementar).
+8. **Decisão de produto vira regra durável.** Quando o usuário disser "já alinhamos que…", registrar a regra (memória/ficha) para não depender de repetição.
 
 ## Ficha da funcionalidade (modelo)
 
@@ -45,6 +46,12 @@ Uma funcionalidade passa por quatro etapas, sempre nesta ordem. Cada etapa preen
 - Auditoria: ação, quem, sem conteúdo sensível
 - Concorrência (integridade-transacional §5): linha dona e invariante, ordem de travas, versão, recusas da disputa, barreiras no banco, cenários de teste
 
+## 2b. Segurança  (seguranca-owasp, OWASP Top 10:2025)
+- Dados sensíveis e quem os vê; acesso (rotina, escopo de empresa, perfil recusado)
+- Entrada livre/arquivo/exportação: onde é validada ou escapada
+- Abuso (limites, fluxo fora de ordem, CSRF); log (ações e recusas, sem conteúdo sensível); erros sem detalhe interno
+- Testes de segurança desta funcionalidade
+
 ## 3. Interface  (desenhar-interface + aplicar-design-system)
 - Componentes e padrões do sistema usados; algo novo criado no sistema?
 - Telas por perfil; desktop e celular
@@ -63,6 +70,7 @@ Antes de declarar a fase concluída:
 
 - [ ] **Back:** cada regra, cada recusa (com o código), cada caso de borda e o teste de equivalência quando a regra existir em duas formas (ver `modelar-dados-api`).
 - [ ] **Concorrência:** testes reais contra o banco passando em 5 execuções seguidas, invariantes conferidos, nenhum 500, sem sobra de dados de teste (ver `integridade-transacional` §6). O relato separa o que foi provado do que é preventivo.
+- [ ] **Segurança:** perfil recusado em cada rota nova, isolamento entre empresas (id de outra empresa → 404), entrada hostil, erro sem detalhe interno, auditoria sem conteúdo sensível, testes de contrato (SQL, HTML injetado, mensagem de erro, rota sem guarda) passando (ver `seguranca-owasp` §4). Dependência nova auditada.
 - [ ] **Tela:** testes de componente para cada perfil e estado (vazio, recusa, sucesso, confirmação).
 - [ ] **Design system:** lista de verificação de `aplicar-design-system` (sem valor solto, estados, contraste, teclado, sem rolagem lateral).
 - [ ] **Navegador:** fluxo real em celular (~375 px) e desktop (~1366 px), com usuários de cada perfil, dados marcados e limpos ao final.

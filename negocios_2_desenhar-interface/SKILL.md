@@ -30,6 +30,10 @@ Entrada: regra (seção 1) e contrato (seção 2) da ficha. Saída: seção **3.
 
 Para cada tela, prever e testar: carregando, vazio (com o porquê), recusa (motivo + o que fazer), sucesso (aviso do efeito), conflito (dado mudou — recarregar e dizer o que mudou), e a visão de cada perfil.
 
+## Segurança na tela
+
+Ver `seguranca-owasp`. Na tela: nada de HTML injetado (`dangerouslySetInnerHTML`/`innerHTML`); token de sessão nunca em `localStorage` (a sessão fica em cookie `httpOnly`); toda chamada pelo cliente HTTP central; mensagem de erro mostra o motivo de negócio e um identificador de ocorrência, nunca texto interno; erro registrado no console/log só com contexto e código, sem o corpo da requisição; dado sensível fora de URL e de título de aba; opção sem permissão não aparece (o back recusa de qualquer forma).
+
 ## Contrato com o back
 
 - A tela não reimplementa a regra: usa opções, prévia e campos que o back devolve por perfil.
