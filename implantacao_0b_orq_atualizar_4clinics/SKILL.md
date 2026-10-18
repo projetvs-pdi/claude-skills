@@ -1,11 +1,11 @@
 ---
-name: implantacao-orquestrar-atualizacao
+name: implantacao-orquestrar-atualizacao-4clinics
 description: Conduz a ATUALIZAÇÃO do 4clinics já em produção (versão nova de front, back ou banco) — classificar a mudança, publicar a main com tag, atualizar a VPS com backup obrigatório e migrations, conferir e, se preciso, voltar atrás. Use a cada melhoria, correção ou mudança de banco depois da implantação inicial. Reaproveita implantacao_1, 2, 4 e 5; a parte da VPS é deploy/atualizar-api.sh.
 ---
 
 # Atualizar o 4clinics em produção (trilha B)
 
-Fonte: `D:\git\4clinics\4clinics_backend\docs\plano-implantacao.md` §3. Regras gerais, **modo de trabalho** (rótulo do terminal em todo bloco, um bloco por mensagem, "feito" não é evidência) e **padrão de segredos**: iguais aos de `implantacao_0_orq_implantar`.
+Fonte: `D:\git\4clinics\4clinics_backend\docs\plano-implantacao.md` §3. Regras gerais, **modo de trabalho** (rótulo do terminal em todo bloco, um bloco por mensagem, "feito" não é evidência) e **padrão de segredos**: iguais aos de `implantacao_0_orq_implantar_4clinics`.
 A diferença: **produção já tem dado real de paciente**. O risco está nas migrations, na ordem front/back e em qualquer erro que derrube o serviço no meio do expediente.
 Primeira execução real: `v2026.10.17-1 → -2` em 17/10/2026, sem intervenção (backup antes, 0 migrations, reinício, `/health` ok).
 

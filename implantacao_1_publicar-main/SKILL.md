@@ -35,7 +35,7 @@ Em 16/10/2026: `develop` à frente da `main` por 33 (back) e 46 (app) commits; a
 9. **Registrar:** tag, hash de cada repositório, data, quem.
 
 ## Na trilha B (atualização): ordem do merge
-O Cloudflare Pages publica a `main` do app **no momento do merge**. Na atualização, fazer o merge do **back** primeiro (passo B3 de `implantacao_0b_orq_atualizar`), atualizar a VPS (B4) e **só depois** o merge do **app** (B5). Na implantação inicial (trilha A) a ordem não importa: a API ainda não está no ar.
+O Cloudflare Pages publica a `main` do app **no momento do merge**. Na atualização, fazer o merge do **back** primeiro (passo B3 de `implantacao_0b_orq_atualizar_4clinics`), atualizar a VPS (B4) e **só depois** o merge do **app** (B5). Na implantação inicial (trilha A) a ordem não importa: a API ainda não está no ar.
 Sem o `gh` na máquina: PR, checks e merge pelo GitHub no Chrome (o merge e a tag com o "sim"); tag por `git tag -a` + `git push origin <tag>` no Claude Code.
 
 ## O que o Claude no Chrome faz e não faz

@@ -1,6 +1,6 @@
 ---
-name: implantacao-orquestrar-implantacao
-description: Conduz a implantação INICIAL do 4clinics em produção, de ponta a ponta e em fases com portão — publicar a main no GitHub, front no Cloudflare Pages, API e MySQL na VPS (Ubuntu, sem Docker), backup com restauração testada, verificação e entrada em produção. Use ao colocar o sistema no ar pela primeira vez ou ao repetir a implantação numa clínica nova. Coordena as skills implantacao_1 a implantacao_5. Para versões novas depois do primeiro dia use implantacao_0b_orq_atualizar.
+name: implantacao-orquestrar-implantacao-4clinics
+description: Conduz a implantação INICIAL do 4clinics em produção, de ponta a ponta e em fases com portão — publicar a main no GitHub, front no Cloudflare Pages, API e MySQL na VPS (Ubuntu, sem Docker), backup com restauração testada, verificação e entrada em produção. Use ao colocar o sistema no ar pela primeira vez ou ao repetir a implantação numa clínica nova. Coordena as skills implantacao_1 a implantacao_5. Para versões novas depois do primeiro dia use implantacao_0b_orq_atualizar_4clinics.
 ---
 
 # Implantar o 4clinics (orquestração da trilha A)
