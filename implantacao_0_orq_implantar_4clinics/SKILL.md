@@ -33,7 +33,8 @@ Primeira execução real: 17/10/2026 (registro em `docs/registro-implantacao-202
 - **Gerar na VPS** e mostrar **uma vez** para o cofre: `openssl rand -base64 48 | tr -d '+/=\n' | cut -c1-40` (só letras e números: não quebra `.env` nem shell).
 - **Receber do cofre sem eco**: script com `read -rsp "Cole ... " VAR </dev/tty` dentro de `bash <<'EOS' ... EOS`, gravando com `sudo install -m 600 -o <dono> /dev/null <arquivo>` + `printf ... | sudo tee`. Conferir só os **nomes** (`cut -d= -f1`) e um login de teste, nunca o valor.
 - **Arquivo que precisa sair da VPS** (cópia do keyring): cópia temporária legível → `scp` do Windows → `sha256sum`/`certutil` iguais nos dois lados → `shred -u` do temporário. Nunca `ssh ... > arquivo` no CMD (trava no prompt da *passphrase*).
-- Texto aberto de dump (teste de restauração) é apagado no mesmo dia, na VPS (`shred -u`) e no computador.
+- Texto aberto de dump (teste de restauração) é apagado no mesmo dia, na VPS (`shred -u`) e no computador. Com dado real de paciente, o teste de restauração passa a ser **ritual de revisão** (fase 6 e mensal) e a limpeza é item obrigatório do relatório.
+- **Nunca anexar segredo ao chat com `@arquivo`** (chave `age`, `.env`, token, Origin CA): a menção **lê o conteúdo** para a conversa e não há como retirá-lo do histórico. Mostrar só caminho, tamanho e `Public key:`. Se acontecer: tratar como exposto e **rotacionar** (procedimento na skill `implantacao_5_rollback-backup`, "Rotação da chave age").
 
 ## Sequência
 

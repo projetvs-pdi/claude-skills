@@ -65,6 +65,14 @@ sudo -u backup4clinics cat /opt/4clinics/api/package.json 2>&1 | head -1     # e
 sudo git -C /opt/4clinics/api describe --tags                               # esperado: a tag nova
 ```
 
+### B4 — o dump de antes da atualização é texto aberto (achado de 19/10/2026)
+O `atualizar-api.sh` grava `antes-de-<tag>-*.sql.gz` em `/var/backups/4clinics` **sem criptografia** (é `mysqldump | gzip`) e nada o apaga. Com dado real de paciente, isso deixa dumps abertos no disco da VPS. **Enquanto o script não cifrar sozinho**, depois de cada atualização:
+```bash
+sudo bash -c '. /etc/4clinics/backup.env; cd /var/backups/4clinics && for f in antes-de-*.sql.gz; do age -r "$AGE_RECIPIENT" -o "$f.age" "$f" && chmod 600 "$f.age" && shred -u "$f" && echo "cifrado: $f"; done'
+sudo ls /var/backups/4clinics/ | grep -c 'antes-de-.*\.sql\.gz$'     # esperado: 0
+```
+Para abrir um deles (rollback de banco): `age -d` com a chave privada do cofre, no computador do responsável (como no teste de restauração). Correção definitiva: o script deve cifrar com `AGE_RECIPIENT` e o teste do script deve proibir `.sql.gz` aberto em `$BACKUPS`.
+
 ## B6 — verificação curta (a mesma lista a cada versão)
 De fora (Claude Code):
 ```bash

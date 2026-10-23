@@ -304,7 +304,8 @@ function Convert-StatusToEnum {
     foreach ($enumVal in $StatusEnum) {
         if ($StatusText.Trim() -ieq $enumVal) { return $enumVal }
     }
-    Write-Output "[AVISO] Linha $LinhaOrigem`: status '$StatusText' nao reconhecido pelo ENUM de sbx990. Usando 'Agendado'."
+    # Write-Host (nao Write-Output): o stream de saída da função vira o valor retornado
+    Write-Host "[AVISO] Linha $LinhaOrigem`: status '$StatusText' nao reconhecido pelo ENUM de sbx990. Usando 'Agendado'."
     return 'Agendado'
 }
 

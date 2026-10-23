@@ -84,5 +84,13 @@ Referência completa: `docs/procedimento-backup.md` §9. O administrador executa
 - `msmtp` (Ubuntu): responder "No" ao AppArmor **não descarrega** o perfil já carregado: `apparmor_parser -R /etc/apparmor.d/usr.bin.msmtp`. Senha de app do Gmail (2FA) via `read -rs`; testar o e-mail de ponta a ponta.
 - Teste de restauração feito em 17/10/2026 com a chave `age` **do cofre**: R2 → `age -d` no Windows → banco `4clinics_restore_teste` na VPS; manifesto (50/20/87), 50 tabelas `ENCRYPTION=Y` e contagens das 50 tabelas iguais. Apagar o `.sql.gz` (texto aberto) depois.
 
+## Rotação da chave `age` (se a privada vazar, ou por rotina)
+Feita em 19/10/2026 depois de a chave privada aparecer na conversa (`@arquivo` abre e lê o conteúdo). **Ordem:**
+1. No computador do responsável: `age-keygen -o <novo-arquivo>` → guardar a **privada** no cofre com **segunda cópia**; só a linha `Public key:` pode aparecer no chat. Esperar o "guardada" explícito **antes** do passo 2 (cifrar com uma chave que ninguém abre inutiliza os backups novos).
+2. Na VPS: `cp -p backup.env` de segurança → `sed -i 's|^AGE_RECIPIENT=.*|AGE_RECIPIENT=<pública-nova>|' /etc/4clinics/backup.env` → conferir `grep -c` e que o arquivo continua `600 backup4clinics` → `systemctl start 4clinics-backup` (código 0, `status ok|`).
+3. **Prova:** baixar o backup novo (R2 → VPS → `scp`), abrir com a chave **nova** (abre) e com a **antiga** (`no identity matched any of the recipients`). Apagar tudo o que ficou em texto aberto, no computador e na VPS.
+4. **Não destruir a chave antiga na hora:** os backups antigos ainda dependem dela. Marcá-la no cofre ("destruir depois de <data>") para depois do ciclo de vida: o bloqueio de `daily/` (14 dias) impede apagar antes, e `weekly/` (56 dias) e `monthly/` (366 dias) podem guardar cópias; re-cifrar (abrir com a antiga, cifrar com a nova e subir com outro nome) só se houver dado real que não possa esperar.
+Regra do chat: **nunca** `@arquivo` de chave, token ou `.env`; mostrar caminho, tamanho e `Public key:` apenas.
+
 ## Relato
 Decisão tomada e por quem, comandos executados, saídas, versão final (tag e hash), estado do banco (qual, contagens), backups envolvidos, e o que ficou para depois.
