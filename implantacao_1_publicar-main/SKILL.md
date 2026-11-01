@@ -22,16 +22,16 @@ Em 16/10/2026: `develop` à frente da `main` por 33 (back) e 46 (app) commits; a
    git -C <repo> rev-list --left-right --count origin/main...origin/develop   # esperado "0 N": main não tem nada a mais
    ```
    Se `main` tiver commit que a `develop` não tem (primeiro número > 0): **parar** e decidir com o responsável (integrar na `develop` primeiro).
-2. **Testar local** (Claude Code): back `npx jest` + `npm run banco:ensaio`; front `CI=true npx react-scripts test --watchAll=false` e `REACT_APP_HOST_API=https://api.exemplo.com.br npm run build:pages` (o endereço é só para o teste do build).
+2. **Testar local, sem repetir o CI** (Claude Code; tabela "o que roda onde" em `implantacao_0b_orq_atualizar_4clinics`): back `npx jest` completo + `npm run banco:ensaio`; front `CI=true npx react-scripts test --watchAll=false` (repete o CI de propósito: o Pages publica no merge e a `main` não tem proteção técnica) e `REACT_APP_HOST_API=https://api.exemplo.com.br npm run build:pages` (o endereço é só para o teste do build). Se esses testes já rodaram no B1 sobre o mesmo hash de `origin/develop`, não repetir. **Repositório sem CI:** rodar aqui também o que o CI faria (audits, `npm ci --omit=dev --dry-run` e `npm run build`).
 3. **Abrir o PR** `develop` → `main` com o corpo do checklist (`gh pr create --base main --head develop --title "Release vAAAA.MM.DD-N" --body-file <arquivo>`), ou pelo GitHub (Chrome).
-4. **Esperar o CI** (`gh pr checks <n> --watch`). Primeira execução real do CI: se falhar, **corrigir na `develop`** (não no PR da `main`), repetir. O CI do back audita produção e roda os testes sem banco; o do front audita (crítica), testa e faz o build.
+4. **Esperar o CI** (`gh pr checks <n> --watch`). É **portão**: a `main` não tem proteção técnica, então sem todos os checks verdes não se pede o "sim" nem se faz o merge. Primeira execução real do CI: se falhar, **corrigir na `develop`** (não no PR da `main`), repetir. O CI do back audita produção e roda os testes sem banco; o do front audita (crítica), testa e faz o build.
 5. **Pedir o "sim"** do responsável com o resumo: repositório, número do PR, commits, CI verde, o que muda em produção.
 6. **Merge sem squash** (mantém o histórico): `gh pr merge <n> --merge`, ou botão "Create a merge commit".
 7. **Tag** nos dois repositórios, **mesmo nome**: `vAAAA.MM.DD-N` (ex.: `v2026.10.16-1`).
    ```bash
    git -C <repo> fetch origin && git -C <repo> tag -a v2026.10.16-1 origin/main -m "Release v2026.10.16-1" && git -C <repo> push origin v2026.10.16-1
    ```
-8. **Conferir:** `git rev-parse origin/main origin/develop` iguais (ou `main` à frente só pelo commit de merge), CI da `main` verde, tag listada em `git ls-remote --tags origin`.
+8. **Conferir:** `git rev-parse origin/main origin/develop` iguais (ou `main` à frente só pelo commit de merge), CI da `main` verde (não é preciso esperá-lo para seguir quando a `main` não recebeu outro merge depois do CI do PR: o conteúdo é o mesmo; conferir no relato), tag listada em `git ls-remote --tags origin`.
 9. **Registrar:** tag, hash de cada repositório, data, quem.
 
 ## Na trilha B (atualização): ordem do merge

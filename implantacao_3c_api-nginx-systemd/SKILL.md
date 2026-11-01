@@ -92,6 +92,8 @@ sudo bash /opt/4clinics/api/deploy/atualizar-api.sh v<AAAA.MM.DD-N>
 O script confere o estado, faz o **backup** (antes de qualquer migration), troca o código para a tag, `npm ci --omit=dev`, roda as migrations pendentes com o `migrador`, reinicia e confere o `/health`; se falhar, **volta o código** e explica o que fazer com o banco.
 Precisa de `/etc/4clinics/migrador.env` (bloco 2 da 3b). Esperado no fim: `OK: <anterior> -> <tag>` e o caminho do backup. Depois: `implantacao_4_verificar-producao` (versão curta).
 
+**O script nunca apaga dado, e este passo também não.** Se uma migration recusar porque há dados (por exemplo "só roda com as tabelas vazias"), **pare e cole a saída**: não esvazie tabela, não rode script de limpeza e não contorne a trava para "destravar" a atualização. Apagar dado de produção só com autorização explícita do responsável no chat, depois de medir a produção: ver **"REGRA INEGOCIÁVEL"** em `implantacao_0b_orq_atualizar_4clinics`. O backup que o `atualizar-api.sh` faz é **anterior às migrations, mas posterior a qualquer apagamento feito antes dele**: não protege o que já foi apagado.
+
 ## Volta atrás
 Código: `implantacao_5_rollback-backup` (ou o próprio `atualizar-api.sh` com a tag anterior). Serviço que não sobe: `journalctl -u 4clinics-api -n 80` — linha `[AMBIENTE]` = variável; `[ERRO_INTERNO] <código>` = erro com ocorrência.
 

@@ -18,6 +18,8 @@ Referências: `D:\git\4clinics\4clinics_backend\docs\plano-implantacao.md` §5, 
 
 Registrar sempre: quando, o quê, por quê, quem decidiu.
 
+**Apagar dado de produção (`DELETE`, `TRUNCATE`, `DROP`, tabela vazia exigida) é decisão do responsável, nunca dedução.** O que consta na `develop` (plano, documento, comentário de migration) não autoriza nada. Só com autorização explícita no chat, depois de medir a produção; o backup que protege o apagamento é o **completo no R2 conferido** (§5) mais a cópia local das tabelas, feitos **com a API parada e antes** do apagamento. Procedimento completo: **"REGRA INEGOCIÁVEL"** em `implantacao_0b_orq_atualizar_4clinics`.
+
 ## 2. Front (Cloudflare Pages)
 Pages → Deployments → deploy anterior → **Rollback** (com o "sim"; o Claude no Chrome pode fazer o clique depois da autorização). Conferir: `curl -sI https://app.<dominio>/` e a versão na tela.
 
