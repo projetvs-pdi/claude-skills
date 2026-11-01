@@ -14,7 +14,7 @@ O Pages publica os arquivos estáticos da pasta `build`. Os cabeçalhos de segur
 
 ## Parte 1 — projeto e domínio (Claude no Chrome, com confirmação a cada botão irreversível)
 1. Workers & Pages → criar projeto **Pages** → "Connect to Git" → repositório `4clinics_app`. A **concessão de acesso do Cloudflare ao GitHub é do responsável** (tela de autorização).
-2. Ramo de produção: `main`. Ramos de pré-visualização: desligar (evita publicar a `develop` por engano) ou aceitar só se o responsável pedir.
+2. Ramo de produção: **`producao`** (criar antes a partir da tag publicada: `git push origin <tag>^{commit}:refs/heads/producao`; a `main` **não** publica). Ramos de pré-visualização: desligar (evita publicar a `develop` por engano) ou aceitar só se o responsável pedir.
 3. Configuração de build: **comando** `npm run build:pages`; **pasta de saída** `build`; **raiz** `/`.
 4. **Variáveis (produção):** `REACT_APP_HOST_API=https://api.<dominio>` · `INLINE_RUNTIME_CHUNK=false` · `NODE_VERSION=24`.
    Se `REACT_APP_HOST_API` faltar ou não for `https://` de verdade, o **build falha de propósito** (`seguranca/gerar-pages.js`): é o comportamento certo.
@@ -46,8 +46,8 @@ Esperado: CSP com `connect-src 'self' https://api.<dominio>`, `script-src 'self'
 > Estou logado no painel do Cloudflare. Abra, uma por uma, estas telas da zona `<dominio>`: SSL/TLS (modo de criptografia), versão mínima do TLS, "Always Use HTTPS", regras de limite de requisições, WAF/Bot Fight Mode e as regras de cache. Para cada uma, **só leia e me diga o valor atual** (e tire uma captura). **Não altere nada.** No fim, liste o que está diferente do esperado: Full (strict); TLS mínimo 1.2; Always Use HTTPS ligado; regra de limite em /api/auth/login; cache bypass em api.<dominio>/*.
 
 ## Atualização do front (B5) e volta atrás
-- Atualização: o Pages publica a `main` sozinho; abrir o deploy mais recente, conferir "Success" e a tag/hash no log; rodar a conferência de fora.
-- **Rollback:** Deployments → escolher o deploy anterior → "Rollback" (com o "sim" do responsável). Domínio errado: remover o domínio personalizado. O front antigo continua funcionando com a API nova (regra de compatibilidade).
+- Atualização: o Pages publica a branch **`producao`** (configurada em Configurações → Build → Controle da ramificação; previews = Nenhum). Publicar = `git push origin <tag>^{commit}:refs/heads/producao` no repositório do app, depois do CI verde (o do PR, se a `main` não recebeu outro merge depois dele; senão o da `main` no hash da tag); abrir o deploy mais recente, conferir "Success" e o hash no log; rodar a conferência de fora. Merge na `main` não publica.
+- **Rollback:** Deployments → escolher o deploy anterior → "Rollback" (com o "sim" do responsável); depois alinhar a `producao` com `git push --force-with-lease origin <tag-anterior>^{commit}:refs/heads/producao`. Domínio errado: remover o domínio personalizado. O front antigo continua funcionando com a API nova (regra de compatibilidade).
 
 ## Relato
 Deploy (hash, horário), variáveis conferidas (sem mostrar valores sensíveis), saída do `curl` dos cabeçalhos, cada configuração de segurança como lida (valor + captura), e o que **não** foi conferido (ex.: regra de limite ainda não criada).

@@ -40,13 +40,14 @@ Primeira execução real: `v2026.10.17-1 → -2` em 17/10/2026, sem intervençã
 |---|---|---|---|
 | B1 | Desenvolver na `develop`; testes locais conforme **o que roda onde** (abaixo); `npm run banco:ensaio`; **conferências fixas** (abaixo); anotar o hash da `develop` testada | Claude Code | relatório com contagens e hash |
 | B2 | **Classificar a mudança** (tabela abaixo) e escolher o caminho | Responsável + Claude Code | classe registrada |
-| B3 | **Back:** PR `develop` → `main`, CI do PR verde, merge (sem squash) e **tag nova nos dois repositórios** (`implantacao_1_publicar-main`). **Não fazer o merge do front ainda.** | Claude Code / Chrome, com o "sim" | todos os checks do PR verdes; tag criada |
+| B3 | **Abrir os PRs dos dois repositórios logo que o B1 fechar** (o CI do front leva ~10 min e corre enquanto o resto anda). **Back:** PR `develop` → `main`, CI do PR verde, merge (sem squash) e **tag nova nos dois repositórios** (`implantacao_1_publicar-main`). O front também pode receber o merge agora: o merge na `main` **não publica** (o Pages publica só a branch `producao`). | Claude Code / Chrome, com o "sim" | todos os checks do PR verdes; tag criada |
 | B4 | **VPS:** portão abaixo → `sudo bash /opt/4clinics/api/deploy/atualizar-api.sh <tag>` → **reaplicar permissões** | Administrador (SSH) | `OK: <anterior> -> <tag>`; `git describe` = tag |
-| B5 | **Front, só depois do B4 ok:** merge do PR do app (o Cloudflare Pages publica a `main` **no momento do merge**); conferir o deploy e os cabeçalhos | Chrome, com o "sim" | `curl -I https://app.<dominio>/`, versão nova na tela |
+| B5 | **Front, só depois do B4 ok e do CI do app verde** (o do PR, se a `main` não recebeu outro merge entre o CI do PR e o merge: `git rev-list --count <merge>^1..origin/main` = 1; senão o da `main` no commit da tag): publicar = enviar a tag para a branch `producao` (`git -C 4clinics_app push origin <tag>^{commit}:refs/heads/producao`, sempre avanço, sem `--force`); o Pages publica a `producao`; conferir o deploy e os cabeçalhos | Claude Code / Chrome, com o "sim" | CI verde (PR ou `main`, conforme a regra) no conteúdo da tag; `curl -I https://app.<dominio>/`, bundle novo na tela |
 | B6 | Verificação curta (lista abaixo) e registro | Claude Code / Chrome | relatório |
 
-**Por que a ordem B3 → B4 → B5:** o Pages publica o front assim que a `main` do app recebe o merge. Fazer o merge dos dois repositórios juntos põe o front novo no ar **antes** da API nova. A regra é **back antes do front** (a API nova atende o front antigo). Só front: B3 e B4 ficam de fora, vai direto ao B5.
-**Tag igual nos dois repositórios mesmo quando um não mudou** (a `-2` de 17/10/2026 marcou o app sem mudança). No repositório sem mudança, a tag aponta para a `main` atual; no do front com mudança, a tag é criada **depois** do merge do B5.
+**Por que a ordem B3 → B4 → B5 e a branch `producao`:** desde 01/11/2026 o projeto `4clinics-app` do Cloudflare Pages tem como *ramificação de produção* a `producao` (não a `main`), com previews desligados. Merge ou push na `main` só roda o CI; **o front vai ao ar quando a tag é enviada à `producao`**, igual ao back (que só sai com o `atualizar-api.sh <tag>`). Assim o CI (que leva ~10 min) roda enquanto a VPS é atualizada, e o front só sai com o CI verde e o back já no ar. **Gatilho do B5 (decisão de 01/11/2026):** basta o CI do PR verde quando a `main` não recebeu outro merge depois dele (o CI do PR testa o resultado do merge, o mesmo conteúdo que a `main` terá); o CI da `main` roda em seguida e é só conferido no B6 (falhou = incidente), como no back. Só se outro merge entrou na `main`, esperar o CI da `main` no commit da tag. A regra continua **back antes do front** (a API nova atende o front antigo). Só front: B4 fica de fora; B3 (merge e tag) e B5.
+**Nunca** enviar à `producao` um commit sem o CI verde (conforme o gatilho acima) nem sem tag; `producao` só avança (fast-forward) e ninguém trabalha nela.
+**Tag igual nos dois repositórios mesmo quando um não mudou** (a `-2` de 17/10/2026 marcou o app sem mudança). No repositório sem mudança, a tag aponta para a `main` atual; no do front com mudança, a tag é criada **depois** do merge do B3 (na `main` nova), e é ela que o B5 envia à `producao`.
 
 ## B1/B3 — o que roda onde (cada teste uma vez)
 O CI dos dois repositórios roda **só no PR e no push da `main`** (não no push da `develop`). A `main` **não tem proteção técnica** (repositório privado, plano gratuito: risco aceito em `plano-implantacao.md`), então o CI só barra o merge se o processo for seguido: **sem todos os checks do PR verdes, não há "sim" nem merge.**
@@ -60,6 +61,7 @@ O CI dos dois repositórios roda **só no PR e no push da `main`** (não no push
 | Front: `npm audit --audit-level=critical` | não | **sim** | |
 | Front: build | **`build:pages`** (é o que o Pages roda: gera `_headers`/CSP) | `build` simples | só o local testa o build que vai para o ar |
 
+- **Como rodar o B1 local (lição de 01/11/2026):** **nunca back e front ao mesmo tempo** (disputam máquina e banco e geram falha em cascata); o back com `npx jest --maxWorkers=2` (ou `--runInBand`) e o front com `--maxWorkers=50%`. Várias suítes do back regravam contadores `SX2990` e parâmetros do banco de teste: se uma rodada falhar em muitas suítes (`ER_DUP_ENTRY` no PK, contador atrás do maior id), **não rodar de novo às cegas**: conferir primeiro `tests/seguranca/contadoresSx2.test.js` e, em suítes que passam isoladas, o estado do banco local. Suíte que falha igual no código da tag em produção, no mesmo banco, é problema do banco local, não da versão (rodar num `git worktree` da tag).
 - **Não repetir local na `implantacao_1`:** se `git rev-parse origin/develop` = hash anotado no B1, os testes locais já valem; se mudou, rodar de novo antes do PR.
 - **CI da `main` depois do merge:** não é portão do B4 quando a `main` não recebeu outro merge entre o CI do PR e o merge (`git rev-list --count <merge>^1..origin/main` = 1). O conteúdo é o mesmo que o CI do PR testou. Olhar o resultado no B6 e registrar.
 - **Repositório sem CI** (sem `.github/workflows/` ou o `gh pr checks` não lista nenhum check): tudo o que o CI faria roda **local**, antes do PR, e entra no relatório. Back: `npm audit --omit=dev --audit-level=high` e `npm ci --omit=dev --dry-run`. Front: `npm audit --audit-level=critical` e `npm run build` (os testes já rodam local). Mudou o `ci.yml`? Atualizar esta tabela.
@@ -77,7 +79,7 @@ O CI dos dois repositórios roda **só no PR e no push da `main`** (não no push
 
 | Classe | Exemplo | Cuidado |
 |---|---|---|
-| **Só front** | tela, texto, estilo | Só o B5; rollback = *Rollback* do deploy no Pages |
+| **Só front** | tela, texto, estilo | B3 (merge e tag do app) + B5; rollback = *Rollback* do deploy no Pages |
 | **Back sem migration** | regra, rota, relatório | B3 + B4 (reinício de segundos; fora do horário de pico é melhor) |
 | **Back com migration compatível** | coluna nova opcional, tabela nova, índice | B4; a versão anterior do código continua funcionando com o banco novo; tabela nova precisa de `GRANT` ao `app4clinics` (rodar de novo a geração de `docs/sql/protecao-logs-producao.sql`) |
 | **Migration arriscada** | remover/renomear coluna, alterar tipo, mexer em muita linha, trocar chave | **Não numa versão só.** Duas versões: primeiro acrescentar e migrar (compatível), depois remover. Janela combinada com a clínica, aviso, backup conferido **e restauração testada** antes |
@@ -131,7 +133,7 @@ No navegador (Chrome, sessão do responsável, só leitura): uma tela de lista e
 Mais: o item específico da mudança.
 
 ## Se der errado
-O script volta o **código** sozinho e explica o que fazer com o banco. Banco: nunca desfazer migration às cegas; ver `implantacao_5_rollback-backup`. Front: *Rollback* do deploy no Pages. Registrar o incidente (o que, quando, causa, correção) e **acrescentar um teste** que o pegaria.
+O script volta o **código** sozinho e explica o que fazer com o banco. Banco: nunca desfazer migration às cegas; ver `implantacao_5_rollback-backup`. Front: *Rollback* do deploy no Pages (na hora, sem build); depois alinhar a branch com `git push --force-with-lease origin <tag-anterior>^{commit}:refs/heads/producao` (único caso de força, só na `producao`; gera um build igual ao do rollback). Registrar o incidente (o que, quando, causa, correção) e **acrescentar um teste** que o pegaria.
 
 ## Registro de atualização
 Acrescentar ao registro de implantação (`docs/registro-implantacao-*.md`) ou a um registro de versões: tag, data/hora, hash dos dois repositórios, classe da mudança, quem executou, resultado da verificação curta, caminho do backup anterior à atualização (`/var/backups/4clinics/antes-de-<tag>-*.sql.gz`). **Se apagou dado:** o texto da autorização, o que foi apagado (tabela e linhas), o backup completo do R2 e a cópia local das tabelas, as contagens de cadastros antes e depois e o que a janela significou para a clínica.
