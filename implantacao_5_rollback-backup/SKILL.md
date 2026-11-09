@@ -38,9 +38,14 @@ cd /opt/4clinics/api && sudo git checkout --detach tags/v<TAG-ANTERIOR> && sudo 
 - **Restaurar o backup** (último recurso; perde o que foi gravado depois do backup):
   ```bash
   sudo mysql -e 'CREATE DATABASE `4clinics_restaurado` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
-  gunzip -c /var/backups/4clinics/antes-de-<tag>-<data>.sql.gz | sudo mysql 4clinics_restaurado
+  gunzip -c /var/backups/4clinics/antes-de-<tag>-<data>.sql.gz | sudo mysql 4clinics_restaurado      # só para arquivo ANTIGO aberto (script até a v2026.11.15-1)
   sudo mysql 4clinics_restaurado -e "SELECT COUNT(*) FROM SA1990; SELECT COUNT(*) FROM SC0990; SELECT COUNT(*) FROM SequelizeMeta"
   ```
+  **O backup novo é CIFRADO** (`antes-de-<tag>-<data>.sql.gz.age`): a chave privada NÃO está na VPS. Na máquina do responsável, **no Git Bash** (o PowerShell estraga dados binários em pipe), a restauração passa pelo túnel SSH sem gravar texto aberto em disco:
+  ```bash
+  ssh -p 22022 <admin>@<vps> 'sudo cat /var/backups/4clinics/antes-de-<tag>-<data>.sql.gz.age' | age -d -i chave-privada.txt | gunzip | ssh -p 22022 <admin>@<vps> 'sudo mysql 4clinics_restaurado'
+  ```
+  (o banco `4clinics_restaurado` já criado como acima; depois, as mesmas contagens.)
   Conferir as contagens com o responsável; dar ao `app4clinics` as permissões no banco novo (`docs/sql/protecao-logs-producao.sql` com `<nome_do_banco>` novo); trocar `DB_DATABASE` em `/etc/4clinics/api.env` e reiniciar.
   O banco antigo fica guardado (renomeado) até o responsável decidir.
 
@@ -57,15 +62,21 @@ age -d -i chave-privada.txt db.age | gunzip | ssh <vps> 'sudo mysql 4clinics_res
 ```
 No servidor com criptografia em repouso, o `ENCRYPTION='Y'` do dump funciona (há keyring); num MySQL sem keyring, ver `restaurar-teste.sh`.
 
-## 6. Teste de restauração (mensal; obrigatório antes de dado real)
-Na máquina do responsável (onde está a chave privada), com um MySQL 8 descartável (ex.: Docker) e o `rclone` configurado com leitura do bucket:
+## 6. Testes de restauração (dois, que se completam; obrigatório antes de dado real)
+**6.1 Mensal, manual** (usa a chave privada, por isso não roda na VPS). **Comando recomendado**, na pasta do repositório da API, com Docker rodando, `age` instalado e `~/.4clinics-rclone.conf` (remoto do R2, credenciais do cofre):
 ```bash
-MYSQL_CNF=~/.4clinics-restore.cnf bash deploy/restaurar-teste.sh --identidade chave-privada.txt --r2 r2:4clinics-backup --log restore-teste.log
+bash deploy/restaurar-teste-docker.sh --identidade chave-privada.txt
 ```
-Esperado: `APROVADO ... conferido por: manifesto` (tabelas, triggers e migrations **iguais** às do momento do backup). O script se recusa a usar banco sem "restore" no nome e apaga o banco de teste no fim. Guardar a linha do `restore-teste.log` no registro de implantação. `REPROVADO` = backup **não** confiável: tratar no mesmo dia.
+Sobe um MySQL descartável em Docker, baixa o backup mais recente, restaura, confere e registra no R2; apaga o contêiner no fim. Opções: `--arquivo`, `--sem-registrar`, `--remoto`, `--rclone-conf`, `--log`. **Manual, sem Docker:** na máquina do responsável (onde está a chave privada), com um MySQL 8 descartável **fora da VPS** (ex.: Docker) e o `rclone` configurado com leitura do bucket (e gravação em `restore-teste/`, para o `--registrar`):
+```bash
+MYSQL_CNF=~/.4clinics-restore.cnf bash deploy/restaurar-teste.sh --identidade chave-privada.txt --r2 r2:4clinics-backup --registrar r2:4clinics-backup --log restore-teste.log
+```
+Esperado: `APROVADO ... conferido por: manifesto` (tabelas, triggers e migrations **iguais** às do momento do backup). O script se recusa a usar banco sem "restore" no nome e apaga o banco de teste no fim. Guardar a linha do `restore-teste.log` no registro de implantação. `REPROVADO` = backup **não** confiável: tratar no mesmo dia. O `--registrar` grava o resultado no R2 (`restore-teste/ultimo-aprovado.txt`): **é o que a VPS lê** para parar de cobrar. Se avisar `AVISO: não consegui gravar o registro`, gravar a linha pela VPS (comando no próprio aviso). **Lembrete:** a VPS envia e-mail no dia 1 de cada mês (`4clinics-lembrete-restauracao.timer`) e, se o teste atrasar (> 35 dias) ou nunca tiver sido registrado, **todo dia às 08:00** (`verificar-backup.sh`), com o motivo e o comando pronto.
+
+**6.2 Semanal, automático** (na VPS, sem a chave privada): `deploy/restaurar-teste-semanal.sh`, domingo 04:00 (`4clinics-restaurar-teste.timer`). Confere o sha256 do arquivo do R2 e restaura um dump novo num banco `4clinics_restore_teste`, comparando tabelas/triggers/migrations com o banco em uso; apaga o banco no fim. Resultado em `/var/backups/4clinics/status-restauracao`; falha = e-mail. Ver `docs/procedimento-backup.md` §7.2. Não prova a chave privada nem a recuperação sem a VPS: por isso o 6.1 é obrigatório.
 
 ## 7. Instalar o backup automático (uma vez, na implantação)
-Referência completa: `docs/procedimento-backup.md` §9. O administrador executa; Claude confere as saídas. **Verificado** com dump real + `age` real + restauração (16/10/2026, R2 simulado); **não verificado** em VPS real nem no R2 real.
+Referência completa: `docs/procedimento-backup.md` §9. O administrador executa; Claude confere as saídas. **Teste semanal e lembrete mensal** (06/11/2026): passos 10 a 12 abaixo, depois do backup instalado. **Verificado** com dump real + `age` real + restauração (16/10/2026, R2 simulado); **não verificado** em VPS real nem no R2 real.
 1. **Pacotes e usuário:** `sudo apt -y install age rclone msmtp` e `sudo useradd -r -s /usr/sbin/nologin backup4clinics && sudo install -d -m 700 -o backup4clinics -g backup4clinics /var/backups/4clinics`.
 2. **Chaves age** (na máquina do responsável, **não** na VPS): `age-keygen -o chave-privada.txt` → guardar no cofre; a linha `# public key: age1...` vai para a VPS.
 3. **MySQL:** `backup_user` já criado na skill 3b. `/etc/4clinics/backup.cnf` (`sudo install -m 600 -o backup4clinics /dev/null ...`): `[client]`, `user=backup_user`, `password=<senha-backup>`, `host=localhost`.
@@ -75,7 +86,11 @@ Referência completa: `docs/procedimento-backup.md` §9. O administrador executa
 7. **E-mail do alerta:** conta Gmail `projetvs.pdi@gmail.com` com verificação em duas etapas e **senha de app**; `/etc/4clinics/msmtprc` (0600, dono `backup4clinics`) com `host smtp.gmail.com`, `port 587`, `tls on`, `auth on`, `user`, `password <senha-de-app>`, `from`. Testar: `sudo -u backup4clinics /opt/4clinics/api/deploy/alerta-email.sh "teste" "alerta de teste"` → o e-mail chega.
 8. **Unidades:** copiar `deploy/4clinics-backup.{service,timer}`, `deploy/4clinics-backup-verifica.{service,timer}` e `deploy/4clinics-alerta@.service` para `/etc/systemd/system/`; `sudo systemctl daemon-reload && sudo systemctl enable --now 4clinics-backup.timer 4clinics-backup-verifica.timer`.
 9. **Primeira execução:** `sudo systemctl start 4clinics-backup && journalctl -u 4clinics-backup -n 30` → `backup db_... concluído`; `cat /var/backups/4clinics/status` → `ok|...`; `sudo systemctl start 4clinics-backup-verifica` → `ok: backup recente`. Depois, o teste de restauração (§6) **antes** de dado real.
-10. **Alerta do serviço da API:** descomentar `OnFailure=4clinics-alerta@%n.service` em `4clinics-api.service` e recarregar.
+
+10. **Usuário do teste semanal** (restrito ao banco de teste; gerar a senha na VPS com `openssl rand -base64 30`, guardar no cofre): `sudo mysql -e "CREATE USER 'restore_teste'@'localhost' IDENTIFIED BY '<senha>'; GRANT ALL PRIVILEGES ON \`4clinics_restore_teste\`.* TO 'restore_teste'@'localhost'"`. Arquivo `/etc/4clinics/restore.cnf` (`sudo install -m 600 -o backup4clinics -g backup4clinics /dev/null /etc/4clinics/restore.cnf`, editar): `[client]`, `user=restore_teste`, `password=<senha>`. Conferir: `sudo -u backup4clinics mysql --defaults-extra-file=/etc/4clinics/restore.cnf -e 'SHOW DATABASES'` → só `information_schema` e `performance_schema`.
+11. **Unidades novas:** `setfacl -m u:backup4clinics:rx /opt/4clinics/api/deploy/{restaurar-teste-semanal,lembrete-restauracao}.sh`; copiar `deploy/4clinics-restaurar-teste.{service,timer}` e `deploy/4clinics-lembrete-restauracao.{service,timer}` para `/etc/systemd/system/`; `sudo systemctl daemon-reload && sudo systemctl enable --now 4clinics-restaurar-teste.timer 4clinics-lembrete-restauracao.timer`.
+12. **Primeira execução e e-mail:** `sudo systemctl start 4clinics-restaurar-teste && journalctl -u 4clinics-restaurar-teste -n 20` → `APROVADO ...`; `cat /var/backups/4clinics/status-restauracao` → `ok|...`. Depois `sudo systemctl start 4clinics-lembrete-restauracao` → o e-mail **chega** (é o teste real do envio). Se o teste semanal falhar na primeira vez, colar a saída e parar. Até o primeiro teste manual com `--registrar` (§6.1), a verificação diária das 08:00 avisa por e-mail que ele está pendente (esperado).
+13. **Alerta do serviço da API:** descomentar `OnFailure=4clinics-alerta@%n.service` em `4clinics-api.service` e recarregar.
 
 ## Ajustes do primeiro uso do backup (17/10/2026)
 - `/etc/4clinics` é `750 root:api4clinics`: o usuário `backup4clinics` precisa de **ACL só de travessia** (`apt -y install acl`; `setfacl -m u:backup4clinics:x /etc/4clinics /opt/4clinics /opt/4clinics/api`; `setfacl -R -m u:backup4clinics:rX /opt/4clinics/api/deploy`), sem entrar no grupo da API (o `api.env` continua fechado para ele).

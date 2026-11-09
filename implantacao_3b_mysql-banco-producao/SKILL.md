@@ -44,6 +44,9 @@ CREATE USER 'app4clinics'@'127.0.0.1' IDENTIFIED BY '<senha-app>';
 -- backup: só leitura, usado por deploy/backup-banco.sh (skill implantacao_5_rollback-backup)
 CREATE USER 'backup_user'@'localhost' IDENTIFIED BY '<senha-backup>';
 GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES, PROCESS ON *.* TO 'backup_user'@'localhost';
+-- teste semanal de restauração (docs/procedimento-backup.md §7.2): só enxerga o banco de teste, nunca o de produção
+CREATE USER 'restore_teste'@'localhost' IDENTIFIED BY '<senha-restore>';
+GRANT ALL PRIVILEGES ON `4clinics_restore_teste`.* TO 'restore_teste'@'localhost';
 ```
 Arquivo `/etc/4clinics/migrador.env` (`sudo install -m 600 -o root -g root /dev/null ...` e editar): `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_DATABASE=4clinics`, `DB_USER=migrador`, `DB_PASSWORD=<senha-migrador>`.
 

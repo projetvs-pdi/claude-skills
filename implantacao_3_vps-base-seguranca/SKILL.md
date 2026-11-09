@@ -57,6 +57,8 @@ sudo ufw allow from <IP-do-administrador> to any port 22 proto tcp     # ou, se 
 sudo bash deploy/ufw-cloudflare.sh                                     # do repositório da API (fase 3c) — ou copie o script antes
 sudo ufw enable
 sudo ufw status verbose
+systemctl is-enabled ufw        # esperado: enabled (senão o firewall NÃO volta sozinho depois de um reinício da VPS)
+# se vier "disabled": sudo systemctl enable ufw   (não muda as regras em uso; visto na VPS em 06/11/2026: ufw ativo mas ufw.service disabled)
 ```
 Esperado: 22 só do IP (ou `LIMIT`), 443 só para as faixas do Cloudflare (comentário `cloudflare`), **nada** em 80, 3306 e 8010. O script só acrescenta regras; rodar de novo todo mês.
 
@@ -67,6 +69,21 @@ sudo aa-status | head -3
 sudo ss -tlnp
 ```
 Esperado: jail `sshd` ativa; AppArmor carregado; em `ss -tlnp` só `:22` em todas as interfaces (443 aparece depois do nginx; 3306 e 8010 só em `127.0.0.1`).
+
+## Bloco 6 — swap comprimido em memória (zram), sem disco
+Por quê: a VPS tem ~4 GB de RAM e **nenhum swap**; sem ele, uma falta de memória faz o Linux encerrar à força o MySQL ou a API. Por que **zram** e não arquivo de swap: o zram fica só na RAM; um swap em disco gravaria páginas de memória em claro (dados de paciente e a chave mestra do MySQL), enfraquecendo a criptografia em repouso. Só roda em VM completa (KVM) com o módulo `zram` no kernel: conferir antes (`systemd-detect-virt` = `kvm`; `modinfo zram`). Medido na VPS em 06/11/2026: KVM, kernel 6.8.0-138, módulo presente, 0 encerramentos por falta de memória em 30 dias.
+```bash
+sudo apt -y install systemd-zram-generator
+D=/opt/4clinics/api/deploy
+sudo install -m 644 -o root -g root $D/zram-generator.conf /etc/systemd/zram-generator.conf
+sudo install -m 644 -o root -g root $D/sysctl-zram.conf /etc/sysctl.d/99-zram.conf
+sudo systemctl daemon-reload && sudo systemctl start systemd-zram-setup@zram0.service && sudo sysctl --system >/dev/null
+swapon --show; zramctl; free -m; sysctl vm.swappiness vm.page-cluster
+```
+**Atenção:** o pacote do Ubuntu 22.04 (0.3.2) não conhece `zram-size`, só `zram-fraction` (sem ela o padrão é metade da RAM: 1,9 GB na VPS); o arquivo do repositório já usa `zram-fraction = 0.25`. Para trocar o tamanho depois: `sudo systemctl stop dev-zram0.swap systemd-zram-setup@zram0.service`, editar o arquivo, `sudo systemctl daemon-reload && sudo systemctl start dev-zram0.swap`. O `sysctl --system` pode avisar `Invalid argument` em chaves `net.ipv4.conf.all.*` de outros arquivos: é de antes e não afeta o zram.
+Esperado: `swapon --show` lista `/dev/zram0` (~980M, prioridade 100); `zramctl` mostra `zstd`; `Swap:` do `free -m` com ~980; swappiness 30 e page-cluster 0. Depois de **reiniciar a VPS** (só quando o responsável decidir), `swapon --show` deve listar o zram sozinho.
+**Volta atrás:** `sudo swapoff /dev/zram0 && sudo apt -y remove systemd-zram-generator && sudo rm -f /etc/systemd/zram-generator.conf /etc/sysctl.d/99-zram.conf && sudo sysctl vm.swappiness=60 vm.page-cluster=3`.
+**Acompanhar:** `zramctl` (coluna `DATA` vs `COMPR`) e `free -m`. Uso constante de swap (> ~300 MB) = a RAM ficou pequena: avaliar mais memória no plano, não mais swap.
 
 ## Conferência de fora (Claude Code, da máquina do responsável)
 ```bash

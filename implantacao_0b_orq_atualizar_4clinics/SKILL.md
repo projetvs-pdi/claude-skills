@@ -54,14 +54,14 @@ O CI dos dois repositórios roda **só no PR e no push da `main`** (não no push
 
 | Teste | Local (B1, uma vez) | CI do PR (B3) | Por quê |
 |---|---|---|---|
-| Back: `npx jest` completo (com MySQL) + `npm run banco:ensaio` | **sim** | não roda | o CI roda sem banco: só o local pega migration e regra de banco |
+| Back: `npm run banco:teste:recriar` + `npx jest` completo (com MySQL) + `npm run banco:ensaio` | **sim** | não roda | o CI roda sem banco: só o local pega migration e regra de banco |
 | Back: testes de segurança sem banco | já estão no `jest` completo | **sim** | o CI é a barreira do merge e roda em Linux limpo (permissões, systemd, scripts de deploy) |
 | Back: `npm audit --omit=dev --audit-level=high` e `npm ci --omit=dev --dry-run` | não | **sim** | |
 | Front: `CI=true npx react-scripts test --watchAll=false` | **sim** | **sim** | repetição **de propósito** (decisão de 31/10/2026): o Pages publica no merge e a `main` não tem proteção técnica; se o portão do CI for pulado, o local garante que os testes do front rodaram ao menos uma vez |
 | Front: `npm audit --audit-level=critical` | não | **sim** | |
 | Front: build | **`build:pages`** (é o que o Pages roda: gera `_headers`/CSP) | `build` simples | só o local testa o build que vai para o ar |
 
-- **Como rodar o B1 local (lição de 01/11/2026):** **nunca back e front ao mesmo tempo** (disputam máquina e banco e geram falha em cascata); o back com `npx jest --maxWorkers=2` (ou `--runInBand`) e o front com `--maxWorkers=50%`. Várias suítes do back regravam contadores `SX2990` e parâmetros do banco de teste: se uma rodada falhar em muitas suítes (`ER_DUP_ENTRY` no PK, contador atrás do maior id), **não rodar de novo às cegas**: conferir primeiro `tests/seguranca/contadoresSx2.test.js` e, em suítes que passam isoladas, o estado do banco local. Suíte que falha igual no código da tag em produção, no mesmo banco, é problema do banco local, não da versão (rodar num `git worktree` da tag).
+- **Como rodar o B1 local (lição de 01/11/2026; banco de teste próprio desde 03/11/2026):** **nunca back e front ao mesmo tempo** (disputam máquina e banco e geram falha em cascata); o front com `--maxWorkers=50%`. O back roda num **banco de teste próprio** (`DB_DATABASE_TEST`, `docs/banco-de-teste.md`), nunca no de desenvolvimento: **antes do jest, `npm run banco:teste:recriar`**, e então `npx jest` (um arquivo por vez, como o `jest.config.js` manda). O banco é limpo e idêntico a cada recriação, então **suíte vermelha é defeito real** (do código ou do teste): não comparar com a tag, não acertar contador à mão, não rodar de novo às cegas. O setup do jest recusa rodar se `DB_DATABASE_TEST` faltar ou for o de desenvolvimento.
 - **Não repetir local na `implantacao_1`:** se `git rev-parse origin/develop` = hash anotado no B1, os testes locais já valem; se mudou, rodar de novo antes do PR.
 - **CI da `main` depois do merge:** não é portão do B4 quando a `main` não recebeu outro merge entre o CI do PR e o merge (`git rev-list --count <merge>^1..origin/main` = 1). O conteúdo é o mesmo que o CI do PR testou. Olhar o resultado no B6 e registrar.
 - **Repositório sem CI** (sem `.github/workflows/` ou o `gh pr checks` não lista nenhum check): tudo o que o CI faria roda **local**, antes do PR, e entra no relatório. Back: `npm audit --omit=dev --audit-level=high` e `npm ci --omit=dev --dry-run`. Front: `npm audit --audit-level=critical` e `npm run build` (os testes já rodam local). Mudou o `ci.yml`? Atualizar esta tabela.
@@ -112,13 +112,15 @@ sudo -u backup4clinics cat /opt/4clinics/api/package.json 2>&1 | head -1     # e
 sudo git -C /opt/4clinics/api describe --tags                               # esperado: a tag nova
 ```
 
-### B4 — o dump de antes da atualização é texto aberto (achado de 19/10/2026)
-O `atualizar-api.sh` grava `antes-de-<tag>-*.sql.gz` em `/var/backups/4clinics` **sem criptografia** (é `mysqldump | gzip`) e nada o apaga. Com dado real de paciente, isso deixa dumps abertos no disco da VPS. **Enquanto o script não cifrar sozinho**, depois de cada atualização:
+### B4 — o dump de antes da atualização precisa estar cifrado (achado de 19/10/2026; corrigido no script em 06/11/2026)
+**O script novo cifra sozinho:** o `atualizar-api.sh` gera `antes-de-<tag>-<data>.sql.gz.age` direto (`mysqldump | gzip | age`, nunca em texto aberto), com a chave pública `AGE_RECIPIENT` (ambiente ou `/etc/4clinics/backup.env`); sem o `age` ou sem a chave, **para no passo 1** antes de mudar qualquer coisa; e **avisa** se achar `antes-de-*.sql.gz` aberto na pasta. Cuidado: o script que roda é o da versão **já instalada** na VPS, não o da tag nova; então a cifra automática só vale a partir da atualização **seguinte** à que instala o script novo (na que instala, o passo manual abaixo continua necessário). Conferir depois de toda atualização: `sudo ls /var/backups/4clinics/ | grep 'antes-de-.*\.sql\.gz$'` deve vir vazio.
+
+**Script antigo (até a `v2026.11.15-1` inclusive) e arquivos abertos que sobraram:** o `atualizar-api.sh` antigo grava `antes-de-<tag>-*.sql.gz` **sem criptografia** (`mysqldump | gzip`) e nada o apaga. Com dado real de paciente, isso deixa dumps abertos no disco da VPS. Nesse caso, depois da atualização (no 15-1 isso ficou de fora e o arquivo ficou aberto das 09:47 às 12:08):
 ```bash
 sudo bash -c '. /etc/4clinics/backup.env; cd /var/backups/4clinics && for f in antes-de-*.sql.gz; do age -r "$AGE_RECIPIENT" -o "$f.age" "$f" && chmod 600 "$f.age" && shred -u "$f" && echo "cifrado: $f"; done'
 sudo ls /var/backups/4clinics/ | grep -c 'antes-de-.*\.sql\.gz$'     # esperado: 0
 ```
-Para abrir um deles (rollback de banco): `age -d` com a chave privada do cofre, no computador do responsável (como no teste de restauração). Correção definitiva: o script deve cifrar com `AGE_RECIPIENT` e o teste do script deve proibir `.sql.gz` aberto em `$BACKUPS`.
+Para abrir um deles (rollback de banco): `age -d` com a chave privada do cofre, no computador do responsável (como no teste de restauração; comando na skill `implantacao_5` §4). A correção definitiva está no script, e o teste dele (`tests/deploy/atualizarApiBackupCifrado.test.js`) proíbe gravar o dump em texto aberto.
 
 ## B6 — verificação curta (a mesma lista a cada versão)
 De fora (Claude Code):
@@ -131,6 +133,14 @@ CI da `main` depois do merge (back e front): verde; se falhou, tratar como incid
 Na VPS: `systemctl is-active 4clinics-api`, `sudo journalctl -u 4clinics-api --since "15 min ago" -p warning --no-pager` (sem `[AMBIENTE]` nem `[ERRO_INTERNO]`), `git describe` = tag, `status` do backup `ok`.
 No navegador (Chrome, sessão do responsável, só leitura): uma tela de lista e a tela tocada pela mudança, **console sem erro e sem violação de CSP**.
 Mais: o item específico da mudança.
+
+## Versões com ligação por parâmetro — ordem obrigatória (baixa da implantação e rotinas automáticas)
+A versão com as migrations `20261122090000_BXI1`, `20261123090000_ROT1` e `20261124090000_KPIPENDIA` tem roteiro próprio em `D:\git\4clinics\4clinics_backend\docs\plano-baixa-implantacao.md` §9. Resumo (o roteiro manda):
+1. **Publicar a versão antes de qualquer parâmetro** (B1 → B3 → B4 → B5 → B6). O `atualizar-api.sh` roda `BXI1`, `ROT1` e `KPIPENDIA` em ordem. Os parâmetros novos só existem na tela depois do B4; nada a ajustar antes.
+2. Antes do B4 (VPS): `SELECT @@log_bin_trust_function_creators` = 1 (a BXI1 recria o gatilho `trg_SE2990_bd`) e **fuso do processo e do MySQL** anotado (`timedatectl`, `SELECT @@global.time_zone, NOW(), UTC_TIMESTAMP()`); a consulta do fechamento automático depende do fuso do processo.
+3. Depois do B4, sem ninguém mexer em parâmetro: fechamento automático segue (24 h, a cada 60 min) e a baixa da implantação fica **desligada** (`MV_BXIMPATV = 2`). Conferir as linhas semeadas (`MV_ROTAUTMIN = 60`, `MV_FECHAHRS = 24`, `MV_BXIMPATV = 2`, `MV_BXIMPHRS = 24`, `MV_KPIPENDIA = 365`) e o gatilho com `implantacao`.
+4. **Ligar a baixa só depois da verificação curta (B6):** prévia só leitura do que será baixado → o responsável decide o desfecho do que não aconteceu (Faltou/Cancelar) → `MV_DTLIMIMP` e `MV_PRZRETRO` (mandam sobre tudo) → `MV_BXIMPHRS` → conferir `MV_ROTAUTMIN` → **por último `MV_BXIMPATV` = SIM** → conferir a primeira rodada (log `[Implantação]`, marca em Títulos a faturar, N = prévia) → registrar.
+5. Parar só a baixa: `MV_BXIMPATV` = NÃO (por filial; o fechamento automático continua). Desliga geral, só em emergência: `MV_ROTAUTMIN` em branco (por empresa; **para também o fechamento automático**). Baixa indevida: Desfazer baixa na tela Títulos a faturar (título fora de fatura). Parâmetro em branco = rotina não executa.
 
 ## Se der errado
 O script volta o **código** sozinho e explica o que fazer com o banco. Banco: nunca desfazer migration às cegas; ver `implantacao_5_rollback-backup`. Front: *Rollback* do deploy no Pages (na hora, sem build); depois alinhar a branch com `git push --force-with-lease origin <tag-anterior>^{commit}:refs/heads/producao` (único caso de força, só na `producao`; gera um build igual ao do rollback). Registrar o incidente (o que, quando, causa, correção) e **acrescentar um teste** que o pegaria.
