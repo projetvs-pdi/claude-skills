@@ -50,6 +50,13 @@ GRANT ALL PRIVILEGES ON `4clinics_restore_teste`.* TO 'restore_teste'@'localhost
 ```
 Arquivo `/etc/4clinics/migrador.env` (`sudo install -m 600 -o root -g root /dev/null ...` e editar): `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_DATABASE=4clinics`, `DB_USER=migrador`, `DB_PASSWORD=<senha-migrador>`.
 
+**Usuário do logrotate (`debian-sys-maint`): recriar sempre que o MySQL for reinicializado** (achado de 09/11/2026: o `logrotate.service` falhava todo dia desde 18/10). O Bloco 1 manda reinicializar o banco depois do `apt install`, o que apaga o `debian-sys-maint` que o pacote criou, mas o `/etc/mysql/debian.cnf` mantém a senha dele; o `postrotate` do `/etc/logrotate.d/mysql-server` (`mysqladmin flush-logs`) leva `Access denied` e o serviço fica `failed`. Correção (idempotente; a senha vem do `debian.cnf` e nunca é impressa; só a permissão `RELOAD`):
+```bash
+sudo bash /opt/4clinics/api/deploy/corrigir-logrotate-mysql.sh        # esperado: "flush-logs ok"
+sudo systemctl reset-failed logrotate.service; sudo systemctl start logrotate.service; systemctl is-failed logrotate.service    # esperado: "inactive" (sem falha)
+```
+Se o script ainda não estiver na pasta do código (antes da fase 3c), enviar por `scp` e rodar de `/tmp`.
+
 ## Bloco 3 — montar e preparar (na pasta da API já clonada na tag — fase 3c, passo de código; pode-se clonar antes)
 ```bash
 cd /opt/4clinics/api

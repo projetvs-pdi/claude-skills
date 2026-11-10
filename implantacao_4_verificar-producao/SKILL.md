@@ -29,7 +29,10 @@ systemctl is-active 4clinics-api && curl -fsS http://127.0.0.1:8010/health
 sudo ss -tlnp | grep -E ":(3306|8010|443|22)\b"          # 3306 e 8010 só em 127.0.0.1
 journalctl -u 4clinics-api --since "1 hour ago" -p warning --no-pager | tail -20
 sudo -u api4clinics bash -c 'set -a; . /etc/4clinics/migrador.env; set +a; cd /opt/4clinics/api; NODE_ENV=production node scripts/verificar-banco-producao.js'
+systemctl --failed --no-legend                                   # esperado: VAZIO
+sudo logrotate -d /etc/logrotate.conf 2>&1 | grep -i error       # esperado: nenhuma linha
 ```
+**`systemctl --failed` precisa vir vazio:** uma unidade em falha some no meio do ruído (em 09/11/2026 o `logrotate.service` falhava todo dia desde 18/10 sem ninguém ver: `debian-sys-maint` apagado na reinicialização do MySQL; correção em `deploy/corrigir-logrotate-mysql.sh`, skill `implantacao_3b` Bloco 2). Um reinício da VPS limpa o estado de falha: conferir de novo depois da meia-noite seguinte.
 `verificar-banco-producao.js` (com o usuário **migrador**: o da aplicação não lê a `SequelizeMeta`, de propósito): 16 itens OK.
 
 ## C — navegador (Claude no Chrome; o responsável já está logado como administrador)

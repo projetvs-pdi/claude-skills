@@ -1,6 +1,6 @@
 ---
 name: implantacao-orquestrar-atualizacao-4clinics
-description: Conduz a ATUALIZAÇÃO do 4clinics já em produção (versão nova de front, back ou banco) — classificar a mudança, publicar a main com tag, atualizar a VPS com backup obrigatório e migrations, conferir e, se preciso, voltar atrás. Use a cada melhoria, correção ou mudança de banco depois da implantação inicial. Reaproveita implantacao_1, 2, 4 e 5; a parte da VPS é deploy/atualizar-api.sh. REGRA: dado de produção só se apaga (DELETE, TRUNCATE, DROP, tabela vazia exigida) com autorização explícita do responsável no chat, depois de medir a produção; o que está na develop (plano, documento, comentário) nunca é autorização.
+description: Conduz a ATUALIZAÇÃO do 4clinics já em produção (versão nova de front, back ou banco) — classificar a mudança e a faixa de verificação (rápida, normal ou pesada, com caminho de hotfix), publicar a main com tag, atualizar a VPS com backup obrigatório e migrations, conferir e, se preciso, voltar atrás. Use a cada melhoria, correção ou mudança de banco depois da implantação inicial. Reaproveita implantacao_1, 2, 4 e 5; a parte da VPS é deploy/atualizar-api.sh. REGRA: dado de produção só se apaga (DELETE, TRUNCATE, DROP, tabela vazia exigida) com autorização explícita do responsável no chat, depois de medir a produção; o que está na develop (plano, documento, comentário) nunca é autorização.
 ---
 
 # Atualizar o 4clinics em produção (trilha B)
@@ -50,6 +50,7 @@ Primeira execução real: `v2026.10.17-1 → -2` em 17/10/2026, sem intervençã
 **Tag igual nos dois repositórios mesmo quando um não mudou** (a `-2` de 17/10/2026 marcou o app sem mudança). No repositório sem mudança, a tag aponta para a `main` atual; no do front com mudança, a tag é criada **depois** do merge do B3 (na `main` nova), e é ela que o B5 envia à `producao`.
 
 ## B1/B3 — o que roda onde (cada teste uma vez)
+**Esta tabela é o B1 completo (faixas Normal e Pesada e a rodada completa do dia).** A faixa Rápida usa o B1 reduzido da seção B2b.
 O CI dos dois repositórios roda **só no PR e no push da `main`** (não no push da `develop`). A `main` **não tem proteção técnica** (repositório privado, plano gratuito: risco aceito em `plano-implantacao.md`), então o CI só barra o merge se o processo for seguido: **sem todos os checks do PR verdes, não há "sim" nem merge.**
 
 | Teste | Local (B1, uma vez) | CI do PR (B3) | Por quê |
@@ -87,6 +88,68 @@ O CI dos dois repositórios roda **só no PR e no push da `main`** (não no push
 | **Mudança incompatível entre front e back** | rota que muda formato | Janela combinada; ordem decidida caso a caso e escrita no registro |
 
 Regras de migration: `docs/banco-producao.md` §7.
+
+## B2b — faixas de verificação (rápida, normal, pesada) e hotfix (criado em 10/11/2026)
+
+**Por quê:** com várias publicações por dia, o B1 completo virou o gargalo. Medido em 10/11/2026 (máquina do responsável, back e front em sequência, como manda este documento):
+
+| Etapa do B1 | Tempo medido |
+|---|---|
+| Back: `banco:teste:recriar` | 36 s |
+| **Back: `jest` completo (156 arquivos, 2.202 testes, um arquivo por vez)** | **12m48s** |
+| Back: `banco:ensaio` | 2m26s |
+| Front: testes completos (141 arquivos, `--maxWorkers=50%`) | 4m24s a 6m29s |
+| Front: `build` simples | 52 s |
+| **B1 local completo** | **cerca de 21 a 23 min** |
+
+O tempo está no `jest` serial do back (o `maxWorkers: 1` existe porque os testes dividem o mesmo banco) e em poucos arquivos de tela do front (agenda e pacotes). O comentário "~40 s" no `jest.config.js` do back está desatualizado.
+
+**A faixa vem da classe do B2** (a classe mais arriscada da versão manda):
+
+| Faixa | Classes do B2 | B1 que se exige |
+|---|---|---|
+| **Rápida** | Só front; Back sem migration — **mudança pequena e localizada** | B1 reduzido (abaixo) |
+| **Normal** | Back com migration compatível | B1 completo (como está acima) |
+| **Pesada** | Migration arriscada; Apaga dado; Incompatível front × back | B1 completo + o que a classe exige (janela, restauração testada, regra inegociável) |
+
+**Sobe para a faixa Normal, mesmo sem migration,** a mudança que toca em: financeiro (recebimento, parcela, baixa, saldo), autenticação e segurança, transação ou concorrência, isolamento por empresa (tenant), `deploy/`, ou parâmetro que liga rotina automática. São as áreas em que a regressão custa dinheiro, dado ou acesso, e o teste relacionado pode não pegar.
+
+### B1 reduzido (faixa Rápida)
+1. `git log` e `git diff` da `develop` contra a tag em produção (como no B1): o que vai junto na versão.
+2. **Back:** `npm run banco:teste:recriar` (36 s) e `npx jest --findRelatedTests <arquivos alterados>` mais a pasta de testes do módulo tocado. **Front:** `CI=true npx react-scripts test --watchAll=false --findRelatedTests <arquivos alterados>`. Um repositório de cada vez.
+3. **Correção de defeito:** teste novo que falha sem a correção (provar revertendo) e passa com ela. Obrigatório, sem exceção.
+4. Conferências fixas que levam segundos: `git ls-files -s deploy/*.sh` = `100755` e `tests/contratos/listasVazias.test.js`.
+5. **Não se dispensa:** CI do PR verde (é a barreira do merge), backup em dia no portão do B4, verificação curta (B6). Só a bateria completa e o `banco:ensaio` saem do caminho desta faixa.
+
+**Risco aceito e como é coberto:** o CI não roda a suíte com banco, então, na faixa Rápida, a única checagem de banco antes de produção são os testes relacionados. Por isso existe a **rodada completa do dia**: back e front completos (B1 completo, em sequência) sobre a `develop`, pelo menos **uma vez por dia**, ao fim do expediente de desenvolvimento ou antes da primeira publicação do dia seguinte. Se passar um dia sem ela, **a faixa Rápida fica suspensa** (tudo sobe pela Normal) até a rodada completa passar. Vermelho na rodada completa = defeito real: corrigir antes de publicar qualquer coisa nova, e conferir se o que já subiu no dia é a causa.
+
+### Hotfix (bug em produção que não pode esperar)
+- **Quando:** defeito que está afetando a clínica agora; cabe na faixa Rápida; uma correção só, sem melhoria junto.
+- **Origem:** se a `develop` tem trabalho que **não deve ir** (inacabado, sem teste), a correção sai de uma branch `hotfix/<descricao>` criada **a partir da tag em produção**, não da `develop`. Se a `develop` está toda publicável, o hotfix sai dela como qualquer item da faixa Rápida.
+- **Caminho:** B1 reduzido → PR para a `main` (CI verde) → tag nova nos dois repositórios → B4 → B5 → B6. Mesmas travas de sempre (back antes do front, backup conferido, `producao` só avança).
+- **Depois:** `main` de volta na `develop` (merge, sem perder a correção); conferir conflito. Hotfix que fica fora da `develop` volta a quebrar na próxima versão: tratar como incidente.
+- **Não é hotfix:** o que apaga dado, migration arriscada ou melhoria. Esses seguem a faixa Pesada ou Normal, por mais urgente que pareça.
+
+**Como decidir e onde marcar (regra de 10/11/2026):** a decisão é tomada **no B2, antes de qualquer código**, e não na hora da subida.
+1. **Perguntar ao responsável, no chat:** "a clínica está afetada agora?" Só o responsável sabe. Sem um "sim" dele, **não é hotfix**: segue como atualização normal, na faixa que a classe pedir. Registrar a resposta.
+2. **Os quatro critérios:** está afetando agora; é correção (não funcionalidade nem regra nova); é uma só e pequena; não apaga dado, não tem migration arriscada, não muda o contrato front × back. Falhou um, é atualização.
+3. **Marcas:** branch `hotfix/<descricao>` (quando parte da tag); **PR com `[HOTFIX]` no título e o rótulo `hotfix`**, nos dois repositórios quando os dois mudarem; campo "faixa" e "hotfix: sim" no registro de atualização. **A tag não leva marca** (segue a sequência `vAAAA.MM.DD-N`, que o `atualizar-api.sh` e a tag igual nos dois repositórios esperam).
+4. **Conferência no B3:** o "sim" do merge cita que é hotfix, e antes de pedi-lo o Claude confere o diff contra os critérios acima. Se a correção cresceu (mais de uma coisa, migration, área sensível), **reclassificar** e seguir pela faixa que a classe pedir.
+5. **Na dúvida, não é hotfix.**
+
+**Ferramentas (verificado em 10/11/2026):** o `git` desta máquina lê os dois repositórios privados; o **`gh` não está instalado**. Sem ele, abrir PR, criar o rótulo `hotfix` (uma vez em cada repositório) e fazer o merge dependem do `gh`. **Instalado em 10/11/2026** (winget, v2.103.3, em `C:\Program Files\GitHub CLI\gh.exe`; shells abertas antes da instalação podem precisar de nova sessão para enxergá-lo no PATH). **O login (`gh auth login`) é do responsável**: Claude nunca digita credencial nem token. Sem login, o caminho de reserva é o Chrome com o GitHub aberto e logado, como na `implantacao_1_publicar-main`. Antes do primeiro hotfix real, conferir qual dos dois caminhos está disponível, para não descobrir no meio do incidente.
+
+### Juntar em janelas
+Vários itens da faixa Rápida podem ir **na mesma tag**: backup, `atualizar-api.sh` e verificação são pagos uma vez por janela, não uma vez por item. Janelas do dia: combinar com o responsável (não definidas aqui). Hotfix sai fora de janela.
+
+### Back em paralelo (existe desde 10/11/2026, local; ver `docs/banco-de-teste.md` do back)
+No B1 completo e na rodada completa do dia, o back pode rodar em paralelo, um banco por worker: `npm run banco:teste:recriar:paralelo` (~38 s; 5 min só na primeira vez) e `npm run test:paralelo`. Medido: **7m15s contra 12m48s** (4 workers, 157 de 157 arquivos, 2.206 testes verdes; uma execução). O `npm test` serial continua válido e é a referência se o paralelo der resultado estranho. **Vermelho no paralelo que passa no serial** = investigar (pode ser teste que não isola dado), não ignorar.
+
+### Melhorias do portão que ainda não existem (pendências, não regra)
+- **CI do back com MySQL:** o banco de teste nasce copiando o de desenvolvimento (cadastros-base, dados de teste de usuário e paciente); o CI não tem esse banco. Exige uma base de teste própria, sem dado pessoal. **Decisão do responsável** (fixture versionada sem dado pessoal, ou runner próprio); não commitar cópia do banco de desenvolvimento.
+- Dividir `tests/deploy/backupScripts.test.js` do back (431 s dos 435 s da suíte paralela; roda `bash` centenas de vezes): é o gargalo agora. Estimativa de ~5 min no paralelo, não medida.
+- Suíte de fumaça (login, financeiro, agenda, isolamento por empresa) de poucos minutos, para a rodada completa do dia ficar mais barata.
+- Testes de tela do front (agenda e pacotes) montam a tela inteira e são os mais lentos: testar a regra sem a tela.
 
 ## Portão de B4 (não seguir se falhar)
 **[VPS · admin4clinics]**
@@ -146,4 +209,4 @@ A versão com as migrations `20261122090000_BXI1`, `20261123090000_ROT1` e `2026
 O script volta o **código** sozinho e explica o que fazer com o banco. Banco: nunca desfazer migration às cegas; ver `implantacao_5_rollback-backup`. Front: *Rollback* do deploy no Pages (na hora, sem build); depois alinhar a branch com `git push --force-with-lease origin <tag-anterior>^{commit}:refs/heads/producao` (único caso de força, só na `producao`; gera um build igual ao do rollback). Registrar o incidente (o que, quando, causa, correção) e **acrescentar um teste** que o pegaria.
 
 ## Registro de atualização
-Acrescentar ao registro de implantação (`docs/registro-implantacao-*.md`) ou a um registro de versões: tag, data/hora, hash dos dois repositórios, classe da mudança, quem executou, resultado da verificação curta, caminho do backup anterior à atualização (`/var/backups/4clinics/antes-de-<tag>-*.sql.gz`). **Se apagou dado:** o texto da autorização, o que foi apagado (tabela e linhas), o backup completo do R2 e a cópia local das tabelas, as contagens de cadastros antes e depois e o que a janela significou para a clínica.
+Acrescentar ao registro de implantação (`docs/registro-implantacao-*.md`) ou a um registro de versões: tag, data/hora, hash dos dois repositórios, classe da mudança **e faixa (rápida, normal ou pesada; hotfix ou não)**, quem executou, **na faixa Rápida: os testes relacionados rodados e a data e hora da última rodada completa**, resultado da verificação curta, caminho do backup anterior à atualização (`/var/backups/4clinics/antes-de-<tag>-*.sql.gz`). **Se apagou dado:** o texto da autorização, o que foi apagado (tabela e linhas), o backup completo do R2 e a cópia local das tabelas, as contagens de cadastros antes e depois e o que a janela significou para a clínica.
