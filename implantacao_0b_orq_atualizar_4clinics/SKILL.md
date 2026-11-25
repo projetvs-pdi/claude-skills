@@ -1,6 +1,6 @@
 ---
 name: implantacao-orquestrar-atualizacao-4clinics
-description: Conduz a ATUALIZAÇÃO do 4clinics já em produção (versão nova de front, back ou banco) — classificar a mudança e a faixa de verificação (rápida, normal ou pesada, com caminho de hotfix), publicar a main com tag, atualizar a VPS com backup obrigatório e migrations, conferir e, se preciso, voltar atrás. Use a cada melhoria, correção ou mudança de banco depois da implantação inicial. Reaproveita implantacao_1, 2, 4 e 5; a parte da VPS é deploy/atualizar-api.sh. REGRA: dado de produção só se apaga (DELETE, TRUNCATE, DROP, tabela vazia exigida) com autorização explícita do responsável no chat, depois de medir a produção; o que está na develop (plano, documento, comentário) nunca é autorização.
+description: Conduz a ATUALIZAÇÃO do 4clinics já em produção (versão nova de front, back ou banco) — classificar a mudança e a faixa de verificação (rápida, normal ou pesada, com caminho de hotfix, inclusive vários juntos pelos marcadores [HOTFIX] e [HOTFIX LOTE]), publicar a main com tag, atualizar a VPS com backup obrigatório e migrations, conferir e, se preciso, voltar atrás. Use a cada melhoria, correção ou mudança de banco depois da implantação inicial. Reaproveita implantacao_1, 2, 4 e 5; a parte da VPS é deploy/atualizar-api.sh. REGRA: dado de produção só se apaga (DELETE, TRUNCATE, DROP, tabela vazia exigida) com autorização explícita do responsável no chat, depois de medir a produção; o que está na develop (plano, documento, comentário) nunca é autorização.
 ---
 
 # Atualizar o 4clinics em produção (trilha B)
@@ -55,7 +55,7 @@ O CI dos dois repositórios roda **só no PR e no push da `main`** (não no push
 
 | Teste | Local (B1, uma vez) | CI do PR (B3) | Por quê |
 |---|---|---|---|
-| Back: `npm run banco:teste:recriar` + `npx jest` completo (com MySQL) + `npm run banco:ensaio` | **sim** | não roda | o CI roda sem banco: só o local pega migration e regra de banco |
+| Back: `npm run banco:teste:recriar` + `npx jest` completo (com MySQL) + `npm run banco:ensaio` | **sim** (exceção de um arquivo em "Roteiro de testes mais curto") | não roda | o CI roda sem banco: só o local pega migration e regra de banco |
 | Back: testes de segurança sem banco | já estão no `jest` completo | **sim** | o CI é a barreira do merge e roda em Linux limpo (permissões, systemd, scripts de deploy) |
 | Back: `npm audit --omit=dev --audit-level=high` e `npm ci --omit=dev --dry-run` | não | **sim** | |
 | Front: `CI=true npx react-scripts test --watchAll=false` | **sim** | **sim** | repetição **de propósito** (decisão de 31/10/2026): o Pages publica no merge e a `main` não tem proteção técnica; se o portão do CI for pulado, o local garante que os testes do front rodaram ao menos uma vez |
@@ -82,8 +82,8 @@ O CI dos dois repositórios roda **só no PR e no push da `main`** (não no push
 |---|---|---|
 | **Só front** | tela, texto, estilo | B3 (merge e tag do app) + B5; rollback = *Rollback* do deploy no Pages |
 | **Back sem migration** | regra, rota, relatório | B3 + B4 (reinício de segundos; fora do horário de pico é melhor) |
-| **Back com migration compatível** | coluna nova opcional, tabela nova, índice | B4; a versão anterior do código continua funcionando com o banco novo; tabela nova precisa de `GRANT` ao `app4clinics` (rodar de novo a geração de `docs/sql/protecao-logs-producao.sql`) |
-| **Migration arriscada** | remover/renomear coluna, alterar tipo, mexer em muita linha, trocar chave | **Não numa versão só.** Duas versões: primeiro acrescentar e migrar (compatível), depois remover. Janela combinada com a clínica, aviso, backup conferido **e restauração testada** antes |
+| **Back com migration compatível** | coluna nova opcional, tabela nova, índice, **mudança de chave que só afrouxa a regra** (todo dado atual continua válido, o código anterior funciona e nada se perde) | B4; a versão anterior do código continua funcionando com o banco novo; tabela nova precisa de `GRANT` ao `app4clinics` (rodar de novo a geração de `docs/sql/protecao-logs-producao.sql`) |
+| **Migration arriscada** | remover/renomear coluna, alterar tipo, mexer em muita linha, trocar chave (apertando a regra, ou em que o código anterior deixa de funcionar) | **Não numa versão só.** Duas versões: primeiro acrescentar e migrar (compatível), depois remover. Janela combinada com a clínica, aviso, backup conferido **e restauração testada** antes |
 | **Apaga dado** | `TRUNCATE`/`DELETE`/`DROP`, migration que exige tabela vazia ou recusa com dados, "recadastro" | **Só com autorização explícita do responsável no chat, depois de medir a produção** (regra inegociável acima). Preferir *backfill*. Nunca deduzir de plano ou documento da `develop` |
 | **Mudança incompatível entre front e back** | rota que muda formato | Janela combinada; ordem decidida caso a caso e escrita no registro |
 
@@ -124,42 +124,102 @@ O tempo está no `jest` serial do back (o `maxWorkers: 1` existe porque os teste
 **Risco aceito e como é coberto:** o CI não roda a suíte com banco, então, na faixa Rápida, a única checagem de banco antes de produção são os testes relacionados. Por isso existe a **rodada completa do dia**: back e front completos (B1 completo, em sequência) sobre a `develop`, pelo menos **uma vez por dia**, ao fim do expediente de desenvolvimento ou antes da primeira publicação do dia seguinte. Se passar um dia sem ela, **a faixa Rápida fica suspensa** (tudo sobe pela Normal) até a rodada completa passar. Vermelho na rodada completa = defeito real: corrigir antes de publicar qualquer coisa nova, e conferir se o que já subiu no dia é a causa.
 
 ### Hotfix (bug em produção que não pode esperar)
-- **Quando:** defeito que está afetando a clínica agora; cabe na faixa Rápida; uma correção só, sem melhoria junto.
+- **Quando:** defeito que está afetando a clínica agora; faixa Rápida, ou **Normal** quando há migration compatível ou área sensível (continua hotfix); uma correção por hotfix, sem melhoria junto (várias correções na mesma publicação: **lote**, abaixo).
 - **Origem:** se a `develop` tem trabalho que **não deve ir** (inacabado, sem teste), a correção sai de uma branch `hotfix/<descricao>` criada **a partir da tag em produção**, não da `develop`. Se a `develop` está toda publicável, o hotfix sai dela como qualquer item da faixa Rápida.
-- **Caminho:** B1 reduzido → PR para a `main` (CI verde) → tag nova nos dois repositórios → B4 → B5 → B6. Mesmas travas de sempre (back antes do front, backup conferido, `producao` só avança).
-- **Depois:** `main` de volta na `develop` (merge, sem perder a correção); conferir conflito. Hotfix que fica fora da `develop` volta a quebrar na próxima versão: tratar como incidente.
+- **Caminho:** B1 **da faixa** (reduzido na Rápida, completo na Normal) → PR para a `main` (CI verde) → tag nova nos dois repositórios → B4 → B5 → B6. Mesmas travas de sempre (back antes do front, backup conferido, `producao` só avança).
+- **Depois (passo obrigatório):** `main` de volta na `develop`, por PR com base `develop` (merge, sem perder a correção); conferir conflito e que `git diff origin/develop origin/main` não traz a correção como diferença. Hotfix que fica fora da `develop` volta a quebrar na próxima versão: tratar como incidente.
 - **Não é hotfix:** o que apaga dado, migration arriscada ou melhoria. Esses seguem a faixa Pesada ou Normal, por mais urgente que pareça.
 
 **Como decidir e onde marcar (regra de 10/11/2026):** a decisão é tomada **no B2, antes de qualquer código**, e não na hora da subida.
-1. **Perguntar ao responsável, no chat:** "a clínica está afetada agora?" Só o responsável sabe. Sem um "sim" dele, **não é hotfix**: segue como atualização normal, na faixa que a classe pedir. Registrar a resposta.
-2. **Os quatro critérios:** está afetando agora; é correção (não funcionalidade nem regra nova); é uma só e pequena; não apaga dado, não tem migration arriscada, não muda o contrato front × back. Falhou um, é atualização.
+1. **Primeiro passo, bloqueante (antes de ler ou alterar código para a correção): perguntar ao responsável, no chat:** "a clínica está afetada agora?" (já vem respondida no modelo do `[HOTFIX]`; se não veio, perguntar). Só o responsável sabe. Sem um "sim" dele, **não é hotfix**: segue como atualização normal, na faixa que a classe pedir. Registrar a resposta.
+2. **Os quatro critérios:** está afetando agora; é correção (não funcionalidade nem regra nova); é pequena (no lote, cada item cumpre os critérios sozinho); não apaga dado, não tem migration arriscada, não muda o contrato front × back. Falhou um, é atualização.
 3. **Marcas:** branch `hotfix/<descricao>` (quando parte da tag); **PR com `[HOTFIX]` no título e o rótulo `hotfix`**, nos dois repositórios quando os dois mudarem; campo "faixa" e "hotfix: sim" no registro de atualização. **A tag não leva marca** (segue a sequência `vAAAA.MM.DD-N`, que o `atualizar-api.sh` e a tag igual nos dois repositórios esperam).
-4. **Conferência no B3:** o "sim" do merge cita que é hotfix, e antes de pedi-lo o Claude confere o diff contra os critérios acima. Se a correção cresceu (mais de uma coisa, migration, área sensível), **reclassificar** e seguir pela faixa que a classe pedir.
+4. **Conferência no B3:** o "sim" do merge cita que é hotfix, e antes de pedi-lo o Claude confere o diff contra os critérios acima. Se a correção cresceu, **reclassificar**: migration compatível ou área sensível levam à faixa **Normal** sem deixar de ser hotfix; funcionalidade ou regra nova, mais de uma coisa no mesmo item, migration arriscada ou apagar dado **deixam de ser hotfix**.
 5. **Na dúvida, não é hotfix.**
+
+### Cuidados obrigatórios do hotfix (combinado em 25/11/2026)
+- **Link do PR com a base certa e já marcado.** Entregar o endereço pronto, com **base `main`** (o botão verde do GitHub não garante a base): `https://github.com/gian-setta-gti/<repo>/compare/main...<branch>?expand=1`, informando o título com `[HOTFIX]` e o rótulo `hotfix`. Antes do "sim" do merge, conferir base, título e rótulo. Repositório privado responde **404** a navegador sem login: o responsável copia o endereço para o navegador em que está logado.
+- **Permissão para operação nova:** se o código passa a incluir, alterar ou **excluir** numa tabela em que a API nunca fazia isso, conferir o `GRANT` no portão do B4, mesmo sem tabela nova.
+- **Linhas que a migration muda:** se a migration altera dado, levar ao portão do B4 a consulta de contagem (escrita junto com a correção, só leitura) e registrar o número medido **na produção**. Se apagar ou perder dado, vale a regra inegociável.
+- **Um teste de tela por hotfix:** definir antes do PR qual tela conferir, o que fazer e o resultado esperado. O responsável executa em produção, logado, **no mesmo dia** da publicação; registrar o resultado. Sem isso o registro fica com "tela: pendente" e a versão **não está encerrada**.
+- **Saída da VPS conferível:** usar os blocos rotulados deste documento (uma linha `nome: valor` por conferência e a linha `FIM` no final). Saída sem a linha `FIM`, ou sem algum rótulo, está cortada: pedir de novo, não presumir.
+
+### Marcadores e lote de hotfix (combinado com o responsável em 25/11/2026)
+O responsável diz **no começo da mensagem** se a correção sobe sozinha ou em grupo:
+
+| Marcador | O que o Claude faz |
+|---|---|
+| `[HOTFIX]` | Correção única: diagnostica, corrige, testa e prepara para publicar |
+| `[HOTFIX LOTE]` | Abre o lote com o primeiro item. **Não publica ainda** |
+| `[HOTFIX LOTE +]` | Acrescenta um item ao lote aberto |
+| `[HOTFIX LOTE FECHAR]` | Mostra o resumo, roda os testes uma vez e segue para uma única publicação. Pode trazer todos os itens de uma vez ("subir juntos") |
+
+Modelo da mensagem (para o `[HOTFIX]` e para a abertura do lote):
+```text
+[HOTFIX LOTE]
+Clínica afetada agora: sim
+Tela:
+O que fiz:
+O que aconteceu:
+O que eu esperava:
+(imagens, se houver)
+```
+
+Regras do lote:
+- **O marcador não autoriza ação nenhuma no GitHub nem em produção:** commit, push, merge, tag, VPS (B4) e front (B5) continuam pedindo o "sim". Até o fechamento, **nada é enviado ao GitHub nem publicado**.
+- **Cada item** cumpre sozinho os quatro critérios (inclusive "clínica afetada agora": se a mensagem traz uma resposta só para vários itens, ou nenhuma, confirmar antes), tem diagnóstico, correção e **teste que falha sem ela**. A cada item, responder com a lista atualizada (ex.: "1 pronto, 2 em andamento").
+- **Lista do lote aberto:** mantê-la na memória do projeto (arquivo `hotfix-lote-aberto.md`: itens, situação, arquivos alterados, onde está o código), para outra conversa retomar com "continuar o lote de hotfix". Apagar o arquivo no fechamento. Manter o lote numa só conversa sempre que possível.
+- **Fechamento:** um commit por item, **um PR por repositório** para a `main` (marcas de hotfix acima), **uma rodada de testes no commit final** (a da **faixa mais alta** do lote), **uma tag**. O registro de atualização lista cada correção; o rollback volta todas juntas.
+- **Item urgente:** `[HOTFIX]` com "subir sozinho agora" publica só ele, antes; o lote continua aberto e depois recebe a `main`.
+- **Item que não cabe** (funcionalidade ou regra nova, apaga dado, migration arriscada): avisar e propor tirá-lo do lote.
 
 **Ferramentas (verificado em 10/11/2026):** o `git` desta máquina lê os dois repositórios privados; o **`gh` não está instalado**. Sem ele, abrir PR, criar o rótulo `hotfix` (uma vez em cada repositório) e fazer o merge dependem do `gh`. **Instalado em 10/11/2026** (winget, v2.103.3, em `C:\Program Files\GitHub CLI\gh.exe`; shells abertas antes da instalação podem precisar de nova sessão para enxergá-lo no PATH). **O login (`gh auth login`) é do responsável**: Claude nunca digita credencial nem token. Sem login, o caminho de reserva é o Chrome com o GitHub aberto e logado, como na `implantacao_1_publicar-main`. Antes do primeiro hotfix real, conferir qual dos dois caminhos está disponível, para não descobrir no meio do incidente.
 
 ### Juntar em janelas
-Vários itens da faixa Rápida podem ir **na mesma tag**: backup, `atualizar-api.sh` e verificação são pagos uma vez por janela, não uma vez por item. Janelas do dia: combinar com o responsável (não definidas aqui). Hotfix sai fora de janela.
+Vários itens da faixa Rápida podem ir **na mesma tag**: backup, `atualizar-api.sh` e verificação são pagos uma vez por janela, não uma vez por item. Janelas do dia: combinar com o responsável (não definidas aqui). Hotfix sai fora de janela (o lote de hotfix é a sua própria publicação).
 
 ### Back em paralelo (existe desde 10/11/2026, local; ver `docs/banco-de-teste.md` do back)
 No B1 completo e na rodada completa do dia, o back pode rodar em paralelo, um banco por worker: `npm run banco:teste:recriar:paralelo` (~38 s; 5 min só na primeira vez) e `npm run test:paralelo`. Medido: **7m15s contra 12m48s** (4 workers, 157 de 157 arquivos, 2.206 testes verdes; uma execução). O `npm test` serial continua válido e é a referência se o paralelo der resultado estranho. **Vermelho no paralelo que passa no serial** = investigar (pode ser teste que não isola dado), não ignorar.
 
+### Roteiro de testes mais curto, sem perder verificação (combinado em 25/11/2026)
+Medido no paralelo (4 workers, uma execução de cada): suíte completa **625 s** (204 arquivos); sem `backupScripts.test.js` **247 s** e, numa segunda medição no mesmo dia, **354 s** (203 arquivos; os 62 testes retirados rodam no CI do PR); recriar os bancos, mais 69 s.
+
+1. **Quando pode retirar o arquivo:** só se `deploy/` e o próprio teste não mudaram desde a tag em produção. Conferir antes:
+   ```bash
+   git -C 4clinics_backend diff --name-only <tag em produção>..HEAD -- deploy/ tests/deploy/backupScripts.test.js    # tem de vir vazio
+   ```
+   Vazio:
+   ```bash
+   npm run test:paralelo -- --testPathIgnorePatterns=node_modules --testPathIgnorePatterns=backupScripts
+   ```
+   Veio algum arquivo: suíte **completa**. A retirada vale só porque o CI do PR executa esse arquivo: se ele sair da lista do `ci.yml`, a exceção acaba. Registrar na linha da versão que a suíte rodou sem ele.
+2. **Não retirar a pasta `tests/deploy/` inteira:** há testes ali que o CI não roda (ex.: `relatorioSemanal`, `atualizarApiBackupCifrado`).
+3. **Front completo continua local e no CI** (decisão de 31/10 e 05/11/2026 mantida: a `main` não tem proteção técnica).
+4. **Sem repetição:** durante o desenvolvimento, só o arquivo de teste alterado; o conjunto, **uma vez**, no commit final.
+5. **Computador sem suspender** nas rodadas longas (em 25/11/2026 o front levou 48 min e teve 6 falhas falsas por causa da suspensão).
+6. **Na faixa Normal, não reduzir ao módulo afetado:** back com banco, `banco:ensaio` (quando houver migration), front completo, `build:pages` com `REACT_APP_HOST_API=https://api.exemplo.com.br` (só para o teste do build), CI verde antes do merge, backup e permissões conferidos antes do B4.
+
 ### Melhorias do portão que ainda não existem (pendências, não regra)
 - **CI do back com MySQL:** o banco de teste nasce copiando o de desenvolvimento (cadastros-base, dados de teste de usuário e paciente); o CI não tem esse banco. Exige uma base de teste própria, sem dado pessoal. **Decisão do responsável** (fixture versionada sem dado pessoal, ou runner próprio); não commitar cópia do banco de desenvolvimento.
-- Dividir `tests/deploy/backupScripts.test.js` do back (431 s dos 435 s da suíte paralela; roda `bash` centenas de vezes): é o gargalo agora. Estimativa de ~5 min no paralelo, não medida.
+- Dividir `tests/deploy/backupScripts.test.js` do back em 3 ou 4 arquivos (561 s dos 625 s da suíte paralela em 25/11/2026; roda `bash` centenas de vezes): continua sendo o gargalo quando `deploy/` muda. Ganho da divisão não medido.
+- Imprimir o resumo rotulado da conferência pós-B4 dentro do `deploy/atualizar-api.sh` (hoje é um bloco colado à mão).
 - Suíte de fumaça (login, financeiro, agenda, isolamento por empresa) de poucos minutos, para a rodada completa do dia ficar mais barata.
 - Testes de tela do front (agenda e pacotes) montam a tela inteira e são os mais lentos: testar a regra sem a tela.
 
 ## Portão de B4 (não seguir se falhar)
 **[VPS · admin4clinics]**
 ```bash
-systemctl is-active 4clinics-api && curl -fsS http://127.0.0.1:8010/health; echo
-sudo git -C /opt/4clinics/api describe --tags
-sudo cat /var/backups/4clinics/status
-sudo -u backup4clinics env RCLONE_CONFIG=/etc/4clinics/rclone.conf HOME=/var/backups/4clinics rclone lsf --max-age 26h r2:4clinics-backup/daily/ | grep -c '\.sql\.gz\.age$'
-df -h / | tail -1
+echo "servico: $(systemctl is-active 4clinics-api)"
+echo "health: $(curl -fsS http://127.0.0.1:8010/health)"
+echo "versao: $(sudo git -C /opt/4clinics/api describe --tags)"
+echo "backup: $(sudo cat /var/backups/4clinics/status)"
+echo "backups_r2_26h: $(sudo -u backup4clinics env RCLONE_CONFIG=/etc/4clinics/rclone.conf HOME=/var/backups/4clinics rclone lsf --max-age 26h r2:4clinics-backup/daily/ | grep -c '\.sql\.gz\.age$')"
+echo "disco: $(df -h / | tail -1)"
+echo "FIM DO PORTAO"
 ```
+Quando a versão pede, acrescentar **antes** da linha `FIM` (só leitura):
+- operação nova numa tabela: `echo "grant: $(sudo mysql -e "SHOW GRANTS FOR 'app4clinics'@'127.0.0.1'" | grep -i '<tabela>')"`;
+- migration que altera dado: `echo "linhas_afetadas: $(sudo mysql 4clinics -N -e "<consulta de contagem>")"`.
 - Serviço ativo e `/health` ok **antes** (o script também recusa).
 - Versão atual = a tag anterior registrada.
 - **Backup automático em dia:** `status` começa com `ok|` e há ao menos 1 backup no R2 com menos de 26 h. (O script faz um dump local antes; o do R2 é a cópia fora da VPS.)
@@ -170,10 +230,34 @@ df -h / | tail -1
 O `npm ci` e o `git checkout` rodam como root e recriam arquivos legíveis a "outros". A partir da versão seguinte à `v2026.10.17-2`, o próprio script reaplica as permissões (função `permissoes`); **a primeira atualização que o traz ainda roda com o script antigo**, então reaplicar à mão desta vez. Em todas, conferir:
 ```bash
 sudo chown -R root:api4clinics /opt/4clinics/api && sudo chmod -R g=rX,o= /opt/4clinics/api   # só se a versão anterior for a -2 ou mais antiga
-sudo -u backup4clinics test -x /opt/4clinics/api/deploy/backup-banco.sh && echo "backup executa: OK"
-sudo -u backup4clinics cat /opt/4clinics/api/package.json 2>&1 | head -1     # esperado: Permission denied
-sudo git -C /opt/4clinics/api describe --tags                               # esperado: a tag nova
 ```
+```bash
+echo "versao: $(sudo git -C /opt/4clinics/api describe --tags)"
+echo "backup_executa: $(sudo -u backup4clinics test -x /opt/4clinics/api/deploy/backup-banco.sh && echo OK || echo FALHOU)"
+echo "leitura_negada: $(sudo -u backup4clinics cat /opt/4clinics/api/package.json 2>&1 | head -1)"
+echo "servico: $(systemctl is-active 4clinics-api)"
+echo "health: $(curl -fsS http://127.0.0.1:8010/health)"
+echo "ultima_migration: $(sudo mysql 4clinics -N -e 'SELECT name FROM SequelizeMeta ORDER BY name DESC LIMIT 1')"
+echo "avisos_no_log: $(sudo journalctl -u 4clinics-api --since '5 min ago' -p warning -q --no-pager | wc -l)"
+echo "dumps_abertos: $(sudo ls /var/backups/4clinics/ | grep -c 'antes-de-.*\.sql\.gz$')"
+echo "FIM DA CONFERENCIA"
+```
+Esperado: `versao` = a tag nova; `backup_executa: OK`; `leitura_negada` com `Permission denied`; `servico: active`; `health` com `ok`; `ultima_migration` = a mais nova da versão; `avisos_no_log: 0` (se não for 0, ler o log); `dumps_abertos: 0`.
+
+### B4 — migration criou tabela? Dar `GRANT` ao `app4clinics` **antes de abrir as telas** (incidente de 17/11/2026, `v2026.12.06-1`)
+O usuário `app4clinics` (a API) só tem permissão **por tabela**; o `atualizar-api.sh` roda as migrations com o `migrador` e **não** dá permissão às tabelas novas. Sem o `GRANT`, a API responde o erro genérico (`ER_TABLEACCESS_DENIED_ERROR ... for table 'xx990'` no `journalctl`, com o código `[ERRO_INTERNO]`) em toda tela que usa a tabela. Na `v2026.12.06-1` foram 6 tabelas (`SC3`, `SC4`, `SC5`, `SC6`, `SEA`, `SEB`) e as telas de turnos, motivos e contas a pagar do profissional ficaram fora do ar até a correção.
+- **No B1:** listar as tabelas criadas pelas migrations novas: `grep -hoE "CREATE TABLE( IF NOT EXISTS)? +[A-Za-z0-9_]+|createTable\(['\"][A-Za-z0-9_]+" migrations/<novas>` e levar a lista para o B4 (só o `up`; o `down` apaga).
+- **No B4, logo depois do `OK` do script:** o administrador roda o passo 1 (só leitura, imprime os `GRANT`), o responsável confere e autoriza, e o passo 2 aplica. Trocar a lista de tabelas (use o nome com o sufixo da empresa, ex. `SC5990`; o MySQL da VPS normaliza para minúsculas, o que não atrapalha):
+```bash
+# passo 1 (só leitura)
+sudo mysql -N -e "SELECT CONCAT('GRANT SELECT, INSERT, UPDATE, DELETE ON \`4clinics\`.\`', t.table_name, '\` TO ''', u.user, '''@''', u.host, ''';') FROM mysql.user u JOIN information_schema.tables t ON t.table_schema='4clinics' AND t.table_name IN ('<TABELA1>','<TABELA2>') WHERE u.user='app4clinics';"
+# passo 2 (aplica, só com o "sim" do responsável): o mesmo comando com  | sudo mysql  no final
+# passo 3 (conferir)
+sudo mysql -e "SELECT table_name, GROUP_CONCAT(privilege_type) AS permissoes FROM information_schema.table_privileges WHERE grantee LIKE '%app4clinics%' AND table_name IN ('<TABELA1>','<TABELA2>') GROUP BY table_name;"
+```
+Esperado no passo 3: cada tabela com `SELECT,INSERT,UPDATE,DELETE`. **Tabela de log ou de auditoria** (como `xLOG_ACESSOS_MOVIMENTACOES` e `SC1990`) recebe só `SELECT, INSERT`: não usar o comando acima para ela (ver `docs/sql/protecao-logs-producao.sql`).
+- **No B6:** abrir **uma tela de cada módulo novo** (não só uma lista qualquer) e rodar `sudo journalctl -u 4clinics-api --since "15 min ago" -p warning` depois de abri-las: o `ER_TABLEACCESS_DENIED_ERROR` só aparece quando alguém usa a tela. Anotar o **horário** do `GRANT` no registro.
+- **Pendência de automação:** teste de contrato e/ou `GRANT` dentro do `atualizar-api.sh` (registrada em `docs/registro-implantacao-2026-10-17.md`, seção Pendências).
 
 ### B4 — o dump de antes da atualização precisa estar cifrado (achado de 19/10/2026; corrigido no script em 06/11/2026)
 **O script novo cifra sozinho:** o `atualizar-api.sh` gera `antes-de-<tag>-<data>.sql.gz.age` direto (`mysqldump | gzip | age`, nunca em texto aberto), com a chave pública `AGE_RECIPIENT` (ambiente ou `/etc/4clinics/backup.env`); sem o `age` ou sem a chave, **para no passo 1** antes de mudar qualquer coisa; e **avisa** se achar `antes-de-*.sql.gz` aberto na pasta. Cuidado: o script que roda é o da versão **já instalada** na VPS, não o da tag nova; então a cifra automática só vale a partir da atualização **seguinte** à que instala o script novo (na que instala, o passo manual abaixo continua necessário). Conferir depois de toda atualização: `sudo ls /var/backups/4clinics/ | grep 'antes-de-.*\.sql\.gz$'` deve vir vazio.
@@ -195,7 +279,7 @@ curl -sI https://app.<dominio>/ | grep -iE "content-security-policy|strict-trans
 CI da `main` depois do merge (back e front): verde; se falhou, tratar como incidente (o CI do PR passou e a `main` não).
 Na VPS: `systemctl is-active 4clinics-api`, `sudo journalctl -u 4clinics-api --since "15 min ago" -p warning --no-pager` (sem `[AMBIENTE]` nem `[ERRO_INTERNO]`), `git describe` = tag, `status` do backup `ok`.
 No navegador (Chrome, sessão do responsável, só leitura): uma tela de lista e a tela tocada pela mudança, **console sem erro e sem violação de CSP**.
-Mais: o item específico da mudança.
+Mais: o item específico da mudança. Em **hotfix**, o teste de tela definido antes do PR (seção "Cuidados obrigatórios do hotfix"): sem o resultado, a versão não está encerrada.
 
 ## Versões com ligação por parâmetro — ordem obrigatória (baixa da implantação e rotinas automáticas)
 A versão com as migrations `20261122090000_BXI1`, `20261123090000_ROT1` e `20261124090000_KPIPENDIA` tem roteiro próprio em `D:\git\4clinics\4clinics_backend\docs\plano-baixa-implantacao.md` §9. Resumo (o roteiro manda):
